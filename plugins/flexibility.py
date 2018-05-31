@@ -123,8 +123,7 @@ def update1():
         feasi = 1*feas #bool to int
         feas_t = np.array([np.prod(feasi[:,n]) for n in range(len(feasi[0,:])-1)]) #Check feasibility of each state for all Aircraft
         flex_t[i] = np.count_nonzero(feas_t == 1)/len(feas_t[:])
-    total_inst_flex.append(flex_t)
-    print(np.mean(flex_t))
+    flex = np.mean(flex_t)
     #Plot real time the instant flexibility in the sector
     #plotter.init()
     #plotter.plot(total_inst_flex)
