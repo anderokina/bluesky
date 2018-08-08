@@ -740,10 +740,10 @@ class RadarWidget(QGLWidget):
                     color[i, :] = palette.aircraft + (255,)
 
                 #  Check if aircraft is selected to show SSD
-                if actdata.ssd_all or acid in actdata.ssd_ownship:
+                if acid in actdata.ssd_ownship:
                     selssd[i] = 255
 
-            if len(actdata.ssd_ownship) > 0 or actdata.ssd_conflicts or actdata.ssd_all:
+            if len(actdata.ssd_ownship) > 0 or actdata.ssd_conflicts:
                 update_buffer(self.ssd.selssdbuf, selssd[:MAX_NAIRCRAFT])
 
             update_buffer(self.confcpabuf, cpalines[:MAX_NCONFLICTS * 4])
