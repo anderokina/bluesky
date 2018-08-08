@@ -124,6 +124,37 @@ def update1():
         feas_t = np.array([np.prod(feasi[:,n]) for n in range(len(feasi[0,:])-1)]) #Check feasibility of each state for all Aircraft
         flex_t[i] = np.count_nonzero(feas_t == 1)/len(feas_t[:])
     flex = np.mean(flex_t)
+    print(flex)
+    #Plot real time the instant flexibility in the sector
+    #plotter.init()
+    #plotter.plot(total_inst_flex)
+
+
+def update2(): #Same as before, but with traffics and all states together in array: lat,lon,hdg,spd
+    flex_t = np.zeros(len(traf.id))
+
+    total_inst_flex = []
+
+    for i in range(len(traf.id)):
+        hdg,spd = computeDisk(traf.lat[i],traf.lon[i],traf.tas[i],traf.hdg[i])
+        hdg = np.array(hdg)
+        spd = np.array(spd)
+        lat = traf.lat
+        lon = traf.lon
+        states = np.array(np.meshgrid(lat,lon,hdg,spd)).T.reshape(-1,4)
+        feas = []
+        own = np.array([(traf.hdg[i],traf.tas[i],traf.lat[i],traf.lon[i])], dtype = [('hdg','f'),('spd','f'),('lat','f'),('lon','f')])
+        for j in range(len(traf.id)): #This loop should be vectorized
+            # [i for i in range(x) if i not in s], where s = set([i]) #Generates a list of numbers (indexes for traffic) where ownship (i) is not included -> Avoid using the if
+            #Ideally with list of indexes for intruder traffics, evaluate all at the same time in a vectorised way
+            if j!=i: #Don't evaluate ownship as intruder
+                intr = np.array([(traf.hdg[j],traf.tas[j],traf.lat[j],traf.lon[j])], dtype = [('hdg','f'),('spd','f'),('lat','f'),('lon','f')])
+                feas.append(np.array(positionFeasibility(own, intr, states)))
+        feas = np.array(feas)
+        feasi = 1*feas #bool to int
+        feas_t = np.array([np.prod(feasi[:,n]) for n in range(len(feasi[0,:])-1)]) #Check feasibility of each state for all Aircraft
+        flex_t[i] = np.count_nonzero(feas_t == 1)/len(feas_t[:])
+    flex = np.mean(flex_t)
     #Plot real time the instant flexibility in the sector
     #plotter.init()
     #plotter.plot(total_inst_flex)
@@ -194,6 +225,49 @@ def positionFeasibility(own, intr, state):
     ownspd = np.array(state[:,1])
     ownhdg = np.array(state[:,0])
     v_own = np.array([ownspd*np.sin(np.radians(ownhdg)),ownspd*np.cos(np.radians(ownhdg))])
+    intspd = intr['spd']
+    inthdg = intr['hdg']
+    v_int = np.array([intspd*np.sin(np.radians(inthdg)),intspd*np.cos(np.radians(inthdg))])
+
+    dy = 60.*(intr['lat']-own['lat'])*1852.
+    dx = 60.*(intr['lon']-own['lon'])*np.cos(np.radians(0.5*(own['lat']+intr['lat'])))*1852.
+
+    d = np.sqrt(dx*dx+dy*dy)
+
+    brg = np.arctan2(dx,dy)%(2.*np.pi)
+
+    vxa = ownspd*np.sin(np.radians(ownhdg))
+    vya = ownspd*np.cos(np.radians(ownhdg))
+    vxb = intr['spd']*np.sin(np.radians(intr['hdg']))
+    vyb = intr['spd']*np.cos(np.radians(intr['hdg']))
+
+    vx = vxb-vxa
+    vy = vyb-vya
+
+    tcpa = -(dx*vx+dy*vy)/(vx*vx+vy*vy)
+    tcpa[tcpa < 0] = np.inf #If negative tcpa, set it as infinity
+
+    xcpa = dx+vx*tcpa
+    ycpa = dy+vy*tcpa
+    cpadist = np.sqrt(xcpa*xcpa+ycpa*ycpa)
+
+
+    Rpaz  = 5.*1852
+
+    time_feas = t_horizon>tcpa #cpa within time horizon
+    pos_feas = cpadist>Rpaz #cpa closer than protection zone
+    feas = (pos_feas*time_feas) #cpa within time horizon and protection zone (0-conflict, 1-clear)
+    return np.logical_not(feas)
+
+def positionFeasibility2(state): #same as before but with all states in array
+    #This function provides the trajectory feasibility with a 2 aircraft conflict
+    #Set protection areas of each aircraft
+    safe_h = 2.5 #nm
+    safe_v = 500 #ft
+    #Compute relative velocity
+    ownspd = np.array(state[:,1])
+    ownhdg = np.array(state[:,0])
+    v_own = np.array([state[:,3]*np.sin(np.radians(state[:,2])),state[:,3]*np.cos(np.radians(state[:,2]))])
     intspd = intr['spd']
     inthdg = intr['hdg']
     v_int = np.array([intspd*np.sin(np.radians(inthdg)),intspd*np.cos(np.radians(inthdg))])
