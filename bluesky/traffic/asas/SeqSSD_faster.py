@@ -226,16 +226,8 @@ def constructSSD1(asas, traf):
     #Take the cosinus of alpha to calculate the maximum length of the VO's legs
     cosalpha = np.cos(alpha)
 
-    if asas.priocode == "SRS2":
-        SRS2(asas, traf, ind1, ind2, adsbmax, dist, qdr, cosalpha, xyc, circle_tup, circle_lst, beta, hsepm)
-    elif asas.priocode == "SRS3":
-        SRS3(asas, traf, ind1, ind2, adsbmax, dist, qdr, cosalpha, xyc, circle_tup, circle_lst, beta, hsepm)
-    elif asas.priocode == "SRS4":
-        SRS4(asas, traf, ind1, ind2, adsbmax, dist, qdr, cosalpha, xyc, circle_tup, circle_lst, beta, hsepm)
-    elif asas.priocode == "CS1":
-        CS1(asas, traf, ind1, ind2, adsbmax, dist, qdr, cosalpha, xyc, circle_tup, circle_lst, beta, hsepm)
-    else:
-        all_layers(asas, traf, ind1, ind2, adsbmax, dist, qdr, cosalpha, xyc, circle_tup, circle_lst, beta, hsepm)
+
+    CS1(asas, traf, ind1, ind2, adsbmax, dist, qdr, cosalpha, xyc, circle_tup, circle_lst, beta, hsepm)
 
 
     """
@@ -502,6 +494,7 @@ def all_layers(asas, traf, ind1, ind2, adsbmax, dist, qdr, cosalpha, xyc, circle
             N_angle = 180
             #Define new ARV taking into consideration the heading constraints and the current heading of each aircraft
 
+            asas.trncons = 90
             trn_cons = np.radians(asas.trncons)
             angles2 = np.arange(np.radians(traf.hdg[i])-trn_cons, np.radians(traf.hdg[i])+trn_cons, 2*trn_cons/N_angle)
             # Put points of unit-circle in a (180x2)-array (CW)
@@ -955,7 +948,7 @@ def CS1(asas, traf, ind1, ind2, adsbmax, dist, qdr, cosalpha, xyc, circle_tup, c
     # Consider every aircraft
     for i in range(ntraf):
         # Calculate SSD only for aircraft in conflict (See formulas appendix)
-        if asas.inconf[i] == True:
+        if True == True:
 
 
             # SSD for aircraft i
@@ -988,6 +981,7 @@ def CS1(asas, traf, ind1, ind2, adsbmax, dist, qdr, cosalpha, xyc, circle_tup, c
             N_angle = 180
             #Define new ARV taking into consideration the heading constraints and the current heading of each aircraft
 
+            asas.trncons = 90
             trn_cons = np.radians(asas.trncons)
             angles2 = np.arange(np.radians(traf.hdg[i])-trn_cons, np.radians(traf.hdg[i])+trn_cons, 2*trn_cons/N_angle)
             # Put points of unit-circle in a (180x2)-array (CW)
