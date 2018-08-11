@@ -1,4 +1,6 @@
-""" Plugin to generate SSD figures and save them in the project folder """
+""" Plugin to generate SSD figures and save them in the project folder
+Based on Leonor Inverno's SSD implementation
+Author: Ander Okina """
 # Import the global bluesky objects. Uncomment the ones you need
 from bluesky import stack, traf, sim#, scr, tools
 from bluesky.tools.aero import nm
@@ -6,6 +8,7 @@ from bluesky.tools import geo
 import numpy as np
 from datetime import datetime
 from bluesky.traffic.asas import SeqSSD_faster as SSDfun
+from PIL import Image
 
 #Plotting packages
 import matplotlib.pyplot as plt
@@ -124,6 +127,8 @@ class Simulation():
             # Construct ASAS
             self.constructSSD1(traf.asas, traf)
             self.visualizeSSD(x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner)
+            self.processSSD()
+            self.deleteSSD()
 
         #stack.stack('ECHO This is an update.')
         #stack.stack('ECHO The current time stamp is {time_stamp} seconds'.format(time_stamp = self.time_stamp))
@@ -161,11 +166,33 @@ class Simulation():
 
         return True, 'My plugin received an o%s flag.' % ('n' if self.active else 'ff')
 
+    def processSSD(self):
+        #After generating all the images in visualiseSSD process them
+        for i in range(traf.ntraf):
+            im = Image.open(os.getcwd()+"/figures/"+str(i)+"_"+str(self.time_stamp) +"s"+".png")
+            width, height = im.size
+            pixel_values = list(im.getdata())
+            pixel = np.array(pixel_values)
+
+            #Check which pixel values fall within wanted range of RGB (conflict - red(255,0,0), free - grey (192,192,192))
+            pixs_c = (np.where(np.logical_and(pixel[:,0]==255,np.logical_and(pixel[:,1]==0,pixel[:,2]==0))))[0]# and pixel[:,0]>pixel[:,2])
+            pixs_n = (np.where(np.logical_and(pixel[:,0]==192,np.logical_and(pixel[:,1]==192,pixel[:,2]==192))))[0]
+            flex = len(pixs_c)/(len(pixs_c)+len(pixs_n))
+            print(flex)
+
+            #Delete the picture
+            #os.remove("/Users/anderokina/Documents/GitHub/bluesky/figures"+ str(traf.id[i])+"_"+str(self.time_stamp) +"s"+".jpg")
+
+
+    def deleteSSD(self):
+        #Delete all SSD images from current time step
+        pass
+
     def visualizeSSD(self, x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner):
         ''' VISUALIZING SSD'''
 
         for i in range(traf.ntraf):
-            if 1==1:
+            if 1==1: #*****For future -> If aircraft in interest area (NL airspace)
                 #v_own = np.array([traf.gseast[i], traf.gsnorth[i]])
 
                 #------------------------------------------------------------------------------
@@ -230,7 +257,7 @@ class Simulation():
                 vownx = vown*np.sin(hdg)
                 vowny = vown*np.cos(hdg)
 
-                ax.arrow(x=0,y=0, dx=vownx, dy=vowny, color = '#00CC00', head_width=15, overhang=0.5, zorder=10)
+                #ax.arrow(x=0,y=0, dx=vownx, dy=vowny, color = '#00CC00', head_width=15, overhang=0.5, zorder=10)
                 sol_point, = ax.plot(traf.asas.asase[i], traf.asas.asasn[i], 'd', color = '#000099', label='Solution')
 
 
@@ -247,13 +274,8 @@ class Simulation():
 
                 plt.axis('equal')
                 plt.axis('off')
-                plt.savefig(os.getcwd()+"/figures/"+ str(traf.id[i])+"_"+str(self.time_stamp) +"s"+".png",format = 'png',bbox_inches = 'tight')
+                plt.savefig(os.getcwd()+"/figures/"+ str(i) +"_"+str(self.time_stamp) +"s"+".png",format = 'png',bbox_inches = 'tight')
                 plt.close()
-
-                #Process the picture.....
-
-                #Delete the picture
-                #os.remove("/Users/anderokina/Documents/GitHub/bluesky/figures"+ str(traf.id[i])+"_"+str(self.time_stamp) +"s"+".jpg")
 
 
 
