@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
 import os
+import shutil
 
 try:
     import pyclipper
@@ -89,6 +90,7 @@ class Simulation():
         #self.filename = "simulation_data.txt"
         self.save_SSD = True
         self.show_resolayer = False
+        #self.flexibility = np.zeros(sizelat,sizelon)
 
 
     def update(self):
@@ -168,6 +170,8 @@ class Simulation():
 
     def processSSD(self):
         #After generating all the images in visualiseSSD process them
+        flex_i = np.zeros(traf.ntraf) #For every aircraft store flex
+        #pos = np.array([traf.lat,traf.lon]) #For every aircraft store position
         for i in range(traf.ntraf):
             im = Image.open(os.getcwd()+"/figures/"+str(i)+"_"+str(self.time_stamp) +"s"+".png")
             width, height = im.size
@@ -177,16 +181,22 @@ class Simulation():
             #Check which pixel values fall within wanted range of RGB (conflict - red(255,0,0), free - grey (192,192,192))
             pixs_c = (np.where(np.logical_and(pixel[:,0]==255,np.logical_and(pixel[:,1]==0,pixel[:,2]==0))))[0]# and pixel[:,0]>pixel[:,2])
             pixs_n = (np.where(np.logical_and(pixel[:,0]==192,np.logical_and(pixel[:,1]==192,pixel[:,2]==192))))[0]
-            flex = len(pixs_c)/(len(pixs_c)+len(pixs_n))
-            print(flex)
+            flex = len(pixs_n)/(len(pixs_c)+len(pixs_n))
+            #store the flexibility value
+            flex_i[i] = flex
 
-            #Delete the picture
-            #os.remove("/Users/anderokina/Documents/GitHub/bluesky/figures"+ str(traf.id[i])+"_"+str(self.time_stamp) +"s"+".jpg")
+        #plot the FLEXIBILITY
+        plt.scatter(traf.lon,traf.lat,flex_i)
+        plt.colorbar()
+        plt.show()
+
 
 
     def deleteSSD(self):
         #Delete all SSD images from current time step
-        pass
+        dir = str(os.getcwd()+'/figures')
+        shutil.rmtree(dir)
+        os.makedirs(dir)
 
     def visualizeSSD(self, x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner):
         ''' VISUALIZING SSD'''
