@@ -17,6 +17,8 @@ import matplotlib.patches as mpatches
 import matplotlib.lines as mlines
 import os
 import shutil
+from shapely.geometry import Polygon
+from shapely.ops import unary_union
 
 try:
     import pyclipper
@@ -42,7 +44,7 @@ def init_plugin():
         # Update interval in seconds. By default, your plugin's update function(s)
         # are called every timestep of the simulation. If your plugin needs less
         # frequent updates provide an update interval.
-        'update_interval': traf.asas.dtasas,
+        'update_interval': 10,
 
         # The update function is called after traffic is updated. Use this if you
         # want to do things as a result of what happens in traffic. If you need to
@@ -64,10 +66,10 @@ def init_plugin():
         # The command name for your function
         'SSDEXPORT': [
             # A short usage string. This will be printed if you type HELP <name> in the BlueSky console
-            'SSDEXPORT ON/OFF',
+            'SSDEXPORT ON/OFF NL ON/OFF',
 
             # A list of the argument types your function accepts. For a description of this, see ...
-            '[onoff]',
+            '[onoff, txt, onoff]',
 
             # The name of your function in this plugin
             data.initialize,
@@ -82,15 +84,18 @@ def init_plugin():
 
 ### Periodic update functions that are called by the simulation. You can replace
 ### this by anything, so long as you communicate this in init_plugin
+### Dutch airspace: 54.96964N 5.00976E, 51.45904N 1.99951E, 50.71375N 6.0424E, 52.2058N 7.09716E, 53.2963N 7.2509E, 54.9922N 6.5478E
 
 class Simulation():
     def __init__(self):
         self.time_stamp = 0
         self.active = False
-        #self.filename = "simulation_data.txt"
         self.save_SSD = True
         self.show_resolayer = False
-        #self.flexibility = np.zeros(sizelat,sizelon)
+        self.area = False #Activation of area
+        self.flexibility = [] #For a list of vectors [lat,lon,flex]
+        self.print = False
+        #self.flexibility = np.zeros(sizelat,sizelon) #For a matrix of flex[lat,lon,i] = flex
 
 
     def update(self):
@@ -100,10 +105,8 @@ class Simulation():
 
         self.time_stamp += 1
 
-        print('Got to update!!!')
 
-        #if traf.asas.inconf.any():
-        #    self.update_txtfile()
+
 
         if self.save_SSD == True:
             # SSD - CIRCLES OF VMAX AND VMIN
@@ -123,17 +126,14 @@ class Simulation():
             SSD_inner = np.array(SSD_lst[1])
             x_SSD_inner = np.append(SSD_inner[:, 0], np.array(SSD_inner[0, 0]))
             y_SSD_inner = np.append(SSD_inner[:, 1], np.array(SSD_inner[0, 1]))
-            print('On to visualize')
             # Initialize SSD variables with ntraf
             self.SSDVariables(traf.asas, traf.ntraf)
             # Construct ASAS
             self.constructSSD1(traf.asas, traf)
             self.visualizeSSD(x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner)
-            self.processSSD()
-            self.deleteSSD()
+            #self.processSSD()
+            #self.deleteSSD()
 
-        #stack.stack('ECHO This is an update.')
-        #stack.stack('ECHO The current time stamp is {time_stamp} seconds'.format(time_stamp = self.time_stamp))
 
     def preupdate(self):
         return
@@ -148,25 +148,20 @@ class Simulation():
             return True, "SSDSEQ is currently " + ("ON" if self.active else "OFF")
 
         self.active = True if args[0]==True else False
+        self.area = True if args[2]==True else False #Area of country, only process within
+        #self.countrycode = args[1]
 
         if self.active== True and len(args)== 1:
-            #If the txt file is already created, it should be deleted before a new simulation
 
-            #stack.stack('ECHO The current time stamp is {time_stamp} seconds'.format(time_stamp = self.time_stamp))
-
-            #stack.stack('SSD {flight}'.format(flight = args[0]))
-            #stack.stack('SYN SUPER {no_ac}'.format(no_ac = args[1]))
-            #stack.stack('RESO SEQSSD')
             self.save_SSD = True
 
             timestamp = datetime.now().strftime('%Y%m%d_%H-%M-%S')
-            #self.filename     = "ASASDATA_%s_%s.log" % (stack.get_scenname(), timestamp)
-            #self.path_to_file = "output_smallscn/" + self.filename
 
-            #A new scenario was uploaded so the time stamp has to be set to 0
-            #self.time_stamp = 0
+        if self.area == True:
+            #Generate area of NL that will be used to filter traffic
+            coord = np.array([[54.96964, 5.00976],[ 51.45904, 1.99951], [50.71375, 6.0424],[ 52.2058, 7.09716], [53.2963, 7.2509], [54.9922, 6.5478]])
+            pass
 
-        return True, 'My plugin received an o%s flag.' % ('n' if self.active else 'ff')
 
     def processSSD(self):
         #After generating all the images in visualiseSSD process them
@@ -186,9 +181,11 @@ class Simulation():
             flex_i[i] = flex
 
         #plot the FLEXIBILITY
-        plt.scatter(traf.lon,traf.lat,flex_i)
-        plt.colorbar()
-        plt.show()
+        #plt.scatter(traf.lon,traf.lat,flex_i)
+        #plt.colorbar()
+        #plt.show()
+        print(flex_i)
+
 
 
 
@@ -198,38 +195,110 @@ class Simulation():
         shutil.rmtree(dir)
         os.makedirs(dir)
 
+    def area(self, vset):
+        """ This function calculates the area of the set of FRV or ARV """
+        # Initialize A as it could be calculated iteratively
+        A = 0
+        # Check multiple exteriors
+        if type(vset[0][0]) == list:
+            # Calc every exterior separately
+            for i in range(len(vset)):
+                A += pyclipper.scale_from_clipper(pyclipper.scale_from_clipper(pyclipper.Area(pyclipper.scale_to_clipper(vset[i]))))
+        else:
+            # Single exterior
+            A = pyclipper.scale_from_clipper(pyclipper.scale_from_clipper(pyclipper.Area(pyclipper.scale_to_clipper(vset))))
+        return A
+
     def visualizeSSD(self, x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner):
         ''' VISUALIZING SSD'''
 
+        print('There are '+str(traf.ntraf)+' aircraft')
+        flex = []
         for i in range(traf.ntraf):
+
             if 1==1: #*****For future -> If aircraft in interest area (NL airspace)
                 #v_own = np.array([traf.gseast[i], traf.gsnorth[i]])
 
                 #------------------------------------------------------------------------------
 
                 #PLOTS
-                fig, ax = plt.subplots()
+                #fig, ax = plt.subplots()
 
-                line1, = ax.plot(x_SSD_outer, y_SSD_outer, color = '#000000', label="Velocity limits")
-                ax.plot(x_SSD_inner, y_SSD_inner, color = '#404040')
-
+                #line1, = ax.plot(x_SSD_outer, y_SSD_outer, color = '#000000', label="Velocity limits")
+                #ax.plot(x_SSD_inner, y_SSD_inner, color = '#404040')
                 if traf.asas.ARV[i]:
                     for j in range(len(traf.asas.ARV[i])):
                         FRV_1 = np.array(traf.asas.ARV[i][j])
                         x_FRV1 = np.append(FRV_1[:,0] , np.array(FRV_1[0,0]))
                         y_FRV1 = np.append(FRV_1[:,1] , np.array(FRV_1[0,1]))
-                        plt.plot(x_FRV1, y_FRV1, '-', color = '#000000') #grey
-                        ax.fill(x_FRV1, y_FRV1, color = '#C0C0C0') #grey
+                        #plt.plot(x_FRV1, y_FRV1, '-', color = '#C0C0C0') #gray
+                        #ax.fill(x_FRV1, y_FRV1, color = '#C0C0C0') #gray
+                        #arvarea = SSDfun.area(FRV_1)
+                        FRV1 = FRV_1.tolist()
+                        if j>0:
+                            un_FRV = un_FRV.union(Polygon(FRV1))
+                        elif j==0:
+                            un_FRV = Polygon(FRV1)
+                    free_area = un_FRV.area
+
+                    fig, ax = plt.subplots()
+                    if j==0 and self.print:
+                        x,y = un_FRV.exterior.xy
+                        plt.plot(x,y)
+                        #plt.title('ARV')
+                        #plt.show()
+                    elif self.print:
+                        print(j)
+                        for k in range(len(list(un_FRV))):
+                            x,y = un_FRV[k].exterior.xy
+                            plt.plot(x,y)
+                        #plt.title('ARV')
+                        #plt.show()
+
+
 
 
                 if traf.asas.FRV[i]:
                     for j in range(len(traf.asas.FRV[i])):
                         FRV_1 = np.array(traf.asas.FRV[i][j])
+                        #conf_area = self.area(FRV_1)
                         x_FRV1 = np.append(FRV_1[:,0] , np.array(FRV_1[0,0]))
                         y_FRV1 = np.append(FRV_1[:,1] , np.array(FRV_1[0,1]))
-                        plt.fill(x_FRV1, y_FRV1, color = '#FF0000') #red
-                        #plt.plot(x_FRV1, y_FRV1, '-', color = '#FF0000', alpha=0.5) #red
-                        #plt.fill(x_FRV1, y_FRV1, color = '#FF0000', alpha= 0.5) #red
+                        #plt.fill(x_FRV1, y_FRV1, color = '#FF0000') #red
+
+                        #frvarea = SSDfun.area(FRV_1)
+
+                        FRV2 = FRV_1.tolist()
+                        #print(str(arvarea/(arvarea+frvarea)))
+                        if j>0:
+                            un_FRV2 = un_FRV2.union(Polygon(FRV2))
+                        elif j==0:
+                            un_FRV2 = Polygon(FRV2)
+
+                    conf_area = un_FRV2.area
+
+                    #print('Flexibility of aircraft '+str(i)+' is: '+str(flex))
+
+                    if j==0 and self.print:
+                        x,y = un_FRV2.exterior.xy
+                        plt.plot(x,y)
+                        ax.fill(x, y, color = '#C0C0C0') #gray
+                        plt.title('FRV')
+                        plt.show()
+                    elif self.print:
+                        print(j)
+                        for k in range(len(list(un_FRV2))):
+                            x,y = un_FRV2[k].exterior.xy
+                            plt.plot(x,y)
+                            ax.fill(x, y, color = '#C0C0C0') #gray
+                        plt.title('FRV')
+                        plt.show()
+
+                if not traf.asas.ARV[i] or not traf.asas.FRV[i]:
+                    flex.append(1) #No conflict area -> full flexibility
+                else:
+                    flex.append(free_area/(free_area+conf_area))
+                print('Flexibility of aircraft '+str(i)+' is: '+str(flex[i]))
 
 
                 """
@@ -251,27 +320,28 @@ class Simulation():
                         plt.fill(x_FRV1_3, y_FRV1_3, 'r')
                 """
 
-                if self.show_resolayer == True:
-                    no_layer = traf.asas.reso_layer[i] #layer number
-                    if not no_layer == 0:
-                        layer = traf.asas.layers[no_layer][i]
-                        if len(layer)>0:
-                            for j in range(len(layer)):
-                                FRV_1_5 = np.array(layer[j])
-                                x_FRV1_5 = np.append(FRV_1_5[:,0] , np.array(FRV_1_5[0,0]))
-                                y_FRV1_5 = np.append(FRV_1_5[:,1] , np.array(FRV_1_5[0,1]))
-                                plt.plot(x_FRV1_5, y_FRV1_5, '-', color = '#000000') #limited in black
 
-                vown = traf.gs[i]*0.92
-                hdg = np.radians(traf.hdg[i])
-                vownx = vown*np.sin(hdg)
-                vowny = vown*np.cos(hdg)
+                #if self.show_resolayer == True:
+                #    no_layer = traf.asas.reso_layer[i] #layer number
+                #    if not no_layer == 0:
+                #        layer = traf.asas.layers[no_layer][i]
+                #        if len(layer)>0:
+                #            for j in range(len(layer)):
+                #                FRV_1_5 = np.array(layer[j])
+                #                x_FRV1_5 = np.append(FRV_1_5[:,0] , np.array(FRV_1_5[0,0]))
+                #                y_FRV1_5 = np.append(FRV_1_5[:,1] , np.array(FRV_1_5[0,1]))
+                #                #plt.plot(x_FRV1_5, y_FRV1_5, '-', color = '#000000') #limited in black
+
+                #vown = traf.gs[i]*0.92
+                #hdg = np.radians(traf.hdg[i])
+                #vownx = vown*np.sin(hdg)
+                #vowny = vown*np.cos(hdg)
 
                 #ax.arrow(x=0,y=0, dx=vownx, dy=vowny, color = '#00CC00', head_width=15, overhang=0.5, zorder=10)
-                sol_point, = ax.plot(traf.asas.asase[i], traf.asas.asasn[i], 'd', color = '#000099', label='Solution')
+                #sol_point, = ax.plot(traf.asas.asase[i], traf.asas.asasn[i], 'd', color = '#000099', label='Solution')
 
 
-                """ Legend """
+                #""" Legend """
 
                 #For color coding
                 #red_patch = mpatches.Patch(color = '#FF0000', label= r'$t_{LoS} \leq 3\ mins$')
@@ -282,10 +352,10 @@ class Simulation():
                 #layer_line = mlines.Line2D([], [], color = '#000000',linestyle='-', linewidth=1.5, label='Selected layer: CS' + str(traf.asas.reso_layer[i]))
                 #plt.legend(handles=[gray_patch, yellow_patch, red_patch, white_patch, line1, vel_line, sol_point, layer_line], loc=1, borderaxespad=0., bbox_to_anchor=(1.30, 1))
 
-                plt.axis('equal')
-                plt.axis('off')
-                plt.savefig(os.getcwd()+"/figures/"+ str(i) +"_"+str(self.time_stamp) +"s"+".png",format = 'png',bbox_inches = 'tight')
-                plt.close()
+                #plt.axis('equal')
+                #plt.axis('off')
+                #plt.savefig(os.getcwd()+"/figures/"+ str(i) +"_"+str(self.time_stamp) +"s"+".png",format = 'png',bbox_inches = 'tight')
+                #plt.close()
 
 
 
