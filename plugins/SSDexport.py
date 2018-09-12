@@ -10,6 +10,8 @@ from datetime import datetime
 from bluesky.traffic.asas import SeqSSD_faster as SSDfun
 from PIL import Image
 
+from tempfile import TemporaryFile
+
 #Plotting packages
 import matplotlib.pyplot as plt
 #from matplotlib.cbook import get_sample_data
@@ -75,7 +77,13 @@ def init_plugin():
             data.initialize,
 
             # a longer help text of your function.
-            'Print something to the bluesky console based on the flag passed to MYFUN.']
+            'Generate flexibility data based on SSD polygons'],
+        'MAP': [
+            'MAP ON/OFF',
+            'onoff',
+            data.printMap,
+            'Generate complexity map with collected flexibility data'
+        ]
     }
 
     # init_plugin() should always return these two dicts.
@@ -92,7 +100,13 @@ class Simulation():
         self.area = True #Activation of area
         self.print = False
         self.areaName = str('')
-
+        self.flexibility_global = np.array([])
+        self.dlat = 0
+        self.dlon = 0
+        self.coord = []
+        self.min_lat = 0
+        self.maxlat = 0
+        self.map = False
 
     def update(self):
 
@@ -138,12 +152,15 @@ class Simulation():
     def flexMatrix(self,coords,t):
         #Generates the matrix in which the flexibility information is stored
         #Discretise coordinates so that flex[lat,lon,iteration] = feas/(feas+unfeas)
-        d = 1/100 #Discretise coordinates for every 1/100 of degree -> 0,6 nm
-        dlat = (np.amax(coords[:,0]) - np.amin(coords[:,1]))/d
-        dlon = (np.amax(coords[:,0]) - np.amin(coords[:,1]))/d
+        self.d = 1/100 #Discretise coordinates for every 1/100 of degree -> 0,6 nm
+        self.nlat = (np.amax(coords[:,0]) - np.amin(coords[:,0]))/self.d
+        self.nlon = (np.amax(coords[:,1]) - np.amin(coords[:,1]))/self.d
+        self.min_lat = np.amin(coords[:,0])
+        self.min_lon = np.amin(coords[:,1])
         sim_length = t/30
 
-        flex = 2*np.ones((dlat,dlon,sim_length))
+        flex = np.ones((int(self.nlat)+1,int(self.nlon)+1,int(sim_length))) #Flex values up to 1, if ==2 it's not relevant data
+        flex[:] = np.NaN #Only actual data will be number, otherwise NaN
         return flex
 
 
@@ -160,10 +177,32 @@ class Simulation():
 
         if self.area == True:
             #Generate area of NL that will be used to filter traffic
-            coord = np.array([54.96964, 5.00976, 51.45904, 1.99951, 50.71375, 6.0424, 52.2058, 7.09716, 53.2963, 7.2509, 54.9922, 6.5478])
-            areafilter.defineArea(self.areaName, 'POLY', coord)
+            self.coord = np.array([54.96964, 5.00976, 51.45904, 1.99951, 50.71375, 6.0424, 52.2058, 7.09716, 53.2963, 7.2509, 54.9922, 6.5478])
+            areafilter.defineArea(self.areaName, 'POLY', self.coord)
+            self.flexibility_global = self.flexMatrix(np.reshape(self.coord,(6,2)),3*60*60) #3 hours
 
         return True
+
+    def printMap(self, *args):
+        #Prints the map with the available information of flexibility
+        self.maps = True if args[0]==True else False
+        if self.maps:
+            #Save information for processing
+            flex_map = np.nanmean(self.flexibility_global,axis=0) #Mean for all time steps discarding NaN
+            np.save('flexibility.npy', flex_map)
+            x,y = self.discreteCoord(self.coord[0::2], self.coord[1::2])
+            airspace = np.array()
+            np.save('airspace.npy', airspace)
+            #fig, ax0 = plt.subplots(1)
+
+
+            #c = ax0.pcolor(flex_map)
+            #ax0.plot(self.coord[0::2],self.coord[1::2],'k')
+            #ax0.set_title('Complexity map')
+            #plt.colorbar(c)
+            #fig.tight_layout()
+            #plt.show()
+            self.maps = False
 
 
     def visualizeSSD(self, x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner):
@@ -174,6 +213,8 @@ class Simulation():
         flex = []
         #Obtain list of aircraft inside the defined area
         inNL = areafilter.checkInside(self.areaName, traf.lat, traf.lon, traf.alt)
+        #Obtain the indices of lat and lon of aircraft for flexibiity matrix
+        inlat, inlon = self.discreteCoord(traf.lat, traf.lon)
         print('Aircraft within NL: '+str(np.sum(inNL)))
         for i in range(traf.ntraf):
             i_in = 0
@@ -223,24 +264,32 @@ class Simulation():
                         x,y = un_FRV2.exterior.xy
                         plt.plot(x,y)
                         ax.fill(x, y, color = '#C0C0C0') #gray
-                        plt.title('FRV')
+                        plt.title(traf.id[i])
                         plt.show()
                     elif self.print:
                         for k in range(len(list(un_FRV2))):
                             x,y = un_FRV2[k].exterior.xy
                             plt.plot(x,y)
                             ax.fill(x, y, color = '#C0C0C0') #gray
-                        plt.title('FRV')
+                        plt.title(traf.id[i])
                         plt.show()
 
-                if not traf.asas.ARV[i] or not traf.asas.FRV[i]:
-                    flex.append(1) #No conflict area -> full flexibility
-                else:
+                if traf.asas.ARV[i] and traf.asas.FRV[i]:
                     flex.append(free_area/(free_area+conf_area))
-                print('Flexibility of aircraft '+traf.id[i]+' is: '+str(flex[i_in]))
-                i_in += 1
+                    self.flexibility_global[inlat[i],inlon[i],self.time_stamp] = free_area/(free_area+conf_area)
+                else:
+                    flex.append(1) #No conflict area -> full flexibility
+                    self.flexibility_global[inlat[i],inlon[i],self.time_stamp] = 1
+                print('Flexibility of aircraft '+traf.id[i]+' is: '+str(flex[-1]))
+                i_in = i_in + 1
 
         return
+
+    def discreteCoord(self,lat,lon):
+        in_lat = ((lat-self.min_lat)/self.d) #Indice in matrix of latitude
+        in_lon = ((lon-self.min_lon)/self.d) #Indice in matrix of longitude
+        return in_lat.astype(int), in_lon.astype(int)
+
 
     def SSDVariables(self,asas, ntraf):
         """ Initialize variables for SSD """

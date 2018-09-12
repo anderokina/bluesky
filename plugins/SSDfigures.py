@@ -34,7 +34,7 @@ def init_plugin():
     # Configuration parameters
     config = {
         # The name of your plugin
-        'plugin_name':     'SSDEXPORT',
+        'plugin_name':     'SSDFIGURES',
 
         # The type of this plugin. For now, only simulation plugins are possible.
         'plugin_type':     'sim',
@@ -62,9 +62,9 @@ def init_plugin():
 
     stackfunctions = {
         # The command name for your function
-        'SSDEXPORT': [
+        'SSDFIGURES': [
             # A short usage string. This will be printed if you type HELP <name> in the BlueSky console
-            'SSDEXPORT ON/OFF',
+            'SSDFIGURES ON/OFF',
 
             # A list of the argument types your function accepts. For a description of this, see ...
             '[onoff]',
