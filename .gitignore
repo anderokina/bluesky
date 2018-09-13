@@ -83,3 +83,5 @@ ssd.obj
 # IPython
 *-checkpoint.py
 *-checkpoint.ipynb
+scenario/0-demo-scenario.scn
+*.npy

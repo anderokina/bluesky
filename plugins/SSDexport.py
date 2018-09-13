@@ -3,13 +3,14 @@ Based on Leonor Inverno's SSD implementation
 Author: Ander Okina """
 # Import the global bluesky objects. Uncomment the ones you need
 from bluesky import stack, traf, sim#, scr, tools
-from bluesky.tools.aero import nm
+from bluesky.tools.aero import nm, ft
 from bluesky.tools import geo, areafilter
 import numpy as np
 from datetime import datetime
-from bluesky.traffic.asas import SeqSSD_faster as SSDfun
-from PIL import Image
 
+
+
+from collections import Counter
 from tempfile import TemporaryFile
 
 #Plotting packages
@@ -105,8 +106,10 @@ class Simulation():
         self.dlon = 0
         self.coord = []
         self.min_lat = 0
-        self.maxlat = 0
+        self.min_lon = 0
         self.map = False
+        self.avg_flex = 0
+        self.dalt = 3000*0.3048
 
     def update(self):
 
@@ -140,7 +143,7 @@ class Simulation():
             self.SSDVariables(traf.asas, traf.ntraf)
             # Construct ASAS
             self.constructSSD1(traf.asas, traf)
-            self.visualizeSSD(x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner)
+            self.visualizeSSD(x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner,traf.asas)
 
 
     def preupdate(self):
@@ -151,16 +154,19 @@ class Simulation():
 
     def flexMatrix(self,coords,t):
         #Generates the matrix in which the flexibility information is stored
-        #Discretise coordinates so that flex[lat,lon,iteration] = feas/(feas+unfeas)
-        self.d = 1/100 #Discretise coordinates for every 1/100 of degree -> 0,6 nm
+        #Discretise coordinates so that flex[lat,lon,alt,iteration] = feas/(feas+unfeas)
+        self.d = 1/40 #Discretise coordinates for every 1/100 of degree -> 0,6 nm
         self.nlat = (np.amax(coords[:,0]) - np.amin(coords[:,0]))/self.d
         self.nlon = (np.amax(coords[:,1]) - np.amin(coords[:,1]))/self.d
         self.min_lat = np.amin(coords[:,0])
         self.min_lon = np.amin(coords[:,1])
+        nalt = int(50000/1000) # Altitude in 100ft intervals (flight levels)
         sim_length = t/30
-
-        flex = np.ones((int(self.nlat)+1,int(self.nlon)+1,int(sim_length))) #Flex values up to 1, if ==2 it's not relevant data
+        print('before')
+        flex = np.ones((int(self.nlat)+1,int(self.nlon)+1,nalt+1,int(sim_length)))
+        print('middle')
         flex[:] = np.NaN #Only actual data will be number, otherwise NaN
+        print('flex created')
         return flex
 
 
@@ -173,13 +179,14 @@ class Simulation():
         self.active = True if args[0]==True else False
         self.area = True if args[2]==True else False #Area of country, only process within
         self.areaName = str(args[1])
-        print('Active: '+str(self.active)+', Area: '+str(self.area))
+
 
         if self.area == True:
             #Generate area of NL that will be used to filter traffic
             self.coord = np.array([54.96964, 5.00976, 51.45904, 1.99951, 50.71375, 6.0424, 52.2058, 7.09716, 53.2963, 7.2509, 54.9922, 6.5478])
             areafilter.defineArea(self.areaName, 'POLY', self.coord)
-            self.flexibility_global = self.flexMatrix(np.reshape(self.coord,(6,2)),3*60*60) #3 hours
+            self.flexibility_global = self.flexMatrix(np.reshape(self.coord,(6,2)),24*60*60) #24 hours
+            stack.stack('AREA '+str(self.areaName))
 
         return True
 
@@ -188,13 +195,19 @@ class Simulation():
         self.maps = True if args[0]==True else False
         if self.maps:
             #Save information for processing
-            flex_map = np.nanmean(self.flexibility_global,axis=0) #Mean for all time steps discarding NaN
-            np.save('flexibility.npy', flex_map)
+            flex_map = np.nanmean(self.flexibility_global,axis=3) #Mean for all time steps discarding NaN
+            if os.path.exists('flexibility3d.npy'): #If there's a file already, remove it
+                os.remove('flexibility3d.npy')
+            np.save('flexibility3d.npy', flex_map)
+            flex_map = np.nanmean(flex_map,axis=2) #Mean for all altitudes discarding NaN
+            if os.path.exists('flexibility2d.npy'): #If there's a file already, remove it
+                os.remove('flexibility2d.npy')
+            np.save('flexibility2d.npy', flex_map)
             x,y = self.discreteCoord(self.coord[0::2], self.coord[1::2])
-            airspace = np.array()
+            airspace = np.resize(np.stack((x,y)),(1,2*len(x)))
             np.save('airspace.npy', airspace)
             #fig, ax0 = plt.subplots(1)
-
+            print(self.time_stamp) ####### Check time stamp and size of x in plot
 
             #c = ax0.pcolor(flex_map)
             #ax0.plot(self.coord[0::2],self.coord[1::2],'k')
@@ -203,22 +216,39 @@ class Simulation():
             #fig.tight_layout()
             #plt.show()
             self.maps = False
+            stack.stack('ECHO Data saved')
 
 
-    def visualizeSSD(self, x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner):
+    def visualizeSSD(self, x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner,asas):
         #Generate the SSD velocity obstacles and convert them to polygons
         #so that their areas can be computed
 
-        print('There are '+str(traf.ntraf)+' aircraft')
-        flex = []
         #Obtain list of aircraft inside the defined area
         inNL = areafilter.checkInside(self.areaName, traf.lat, traf.lon, traf.alt)
         #Obtain the indices of lat and lon of aircraft for flexibiity matrix
         inlat, inlon = self.discreteCoord(traf.lat, traf.lon)
-        print('Aircraft within NL: '+str(np.sum(inNL)))
+        #print('Aircraft within NL: '+str(np.sum(inNL)))
         for i in range(traf.ntraf):
-            i_in = 0
             if inNL[i]: #If aircraft in interest area (NL airspace)
+
+                N_angle = 180
+                #Define new ARV taking into consideration the heading constraints and the current heading of each aircraft
+###### To try: create semicircle and then use with ARV
+                asas.trncons = 90 #Turning angle constraint
+                trn_cons = np.radians(asas.trncons)
+                angles2 = np.arange(np.radians(traf.hdg[i])-trn_cons, np.radians(traf.hdg[i])+trn_cons, 2*trn_cons/N_angle)
+                # Put points of unit-circle in a (180x2)-array (CW)
+                xyc2 = np.transpose(np.reshape(np.concatenate((np.sin(angles2), np.cos(angles2))), (2, len(angles2))))
+                #For tupple
+                inner_semicircle = (tuple(map(tuple , xyc2 * asas.vmin)))
+                outer_semicircle = tuple(map(tuple, np.flipud(xyc2 * asas.vmax)))
+                new_circle_tup = inner_semicircle + outer_semicircle
+                #For list
+                inner_semicircle = list(map(list , xyc2 * asas.vmin))
+                outer_semicircle = list(map(list, np.flipud(xyc2 * asas.vmax)))
+                new_circle_lst = inner_semicircle + outer_semicircle
+                sem_circ_pol = Polygon(new_circle_lst)
+                tot_area = sem_circ_pol.area
 
                 if traf.asas.ARV[i]:
                     for j in range(len(traf.asas.ARV[i])):
@@ -233,26 +263,33 @@ class Simulation():
                     free_area = un_FRV.area
 
                     fig, ax = plt.subplots()
-                    if j==0 and self.print:
+                    if type(un_FRV)==Polygon and self.print:
                         x,y = un_FRV.exterior.xy
-                        plt.plot(x,y)
-                        #plt.title('ARV')
-                        #plt.show()
+                        plt.plot(x,y, color ='red')
+                        ax.fill(x, y, color = '#C0C0C0') #gray
+                        x,y = sem_circ_pol.exterior.xy
+                        plt.plot(x,y,color = 'black')
+                        plt.title((traf.id[i]))
+                        plt.show()
                     elif self.print:
                         for k in range(len(list(un_FRV))):
                             x,y = un_FRV[k].exterior.xy
-                            plt.plot(x,y)
+                            plt.plot(x,y, color = 'red')
+                            ax.fill(x, y, color = '#C0C0C0') #gray
+                            x,y = sem_circ_pol.exterior.xy
+                            plt.plot(x,y,color = 'black')
+                        plt.title((traf.id[i]))
+                        plt.show()
 
 
-
-                if traf.asas.FRV[i]:
+                if traf.asas.FRV[i] and 0==1:
                     for j in range(len(traf.asas.FRV[i])):
-                        FRV_1 = np.array(traf.asas.FRV[i][j])
-                        x_FRV1 = np.append(FRV_1[:,0] , np.array(FRV_1[0,0]))
-                        y_FRV1 = np.append(FRV_1[:,1] , np.array(FRV_1[0,1]))
+                        FRV_2 = np.array(traf.asas.FRV[i][j])
+                        x_FRV2 = np.append(FRV_2[:,0] , np.array(FRV_2[0,0]))
+                        y_FRV2 = np.append(FRV_2[:,1] , np.array(FRV_2[0,1]))
 
 
-                        FRV2 = FRV_1.tolist()
+                        FRV2 = FRV_2.tolist()
                         if j>0:
                             un_FRV2 = un_FRV2.union(Polygon(FRV2))
                         elif j==0:
@@ -260,28 +297,30 @@ class Simulation():
 
                     conf_area = un_FRV2.area
 
-                    if j==0 and self.print:
+                    if type(un_FRV2)==Polygon and self.print and 1==0: #If not polygon -> multipolygon
                         x,y = un_FRV2.exterior.xy
-                        plt.plot(x,y)
+                        plt.plot(x,y, color = '000000')
                         ax.fill(x, y, color = '#C0C0C0') #gray
                         plt.title(traf.id[i])
-                        plt.show()
-                    elif self.print:
+                        #plt.show()
+                    elif self.print and 1==0:
                         for k in range(len(list(un_FRV2))):
                             x,y = un_FRV2[k].exterior.xy
-                            plt.plot(x,y)
+                            plt.plot(x,y,color = '000000')
                             ax.fill(x, y, color = '#C0C0C0') #gray
                         plt.title(traf.id[i])
-                        plt.show()
+                        #plt.show()
+                #print('ARV= '+str(free_area)+', FRV= '+str(conf_area)+', total = '+str(free_area+conf_area))
 
-                if traf.asas.ARV[i] and traf.asas.FRV[i]:
-                    flex.append(free_area/(free_area+conf_area))
-                    self.flexibility_global[inlat[i],inlon[i],self.time_stamp] = free_area/(free_area+conf_area)
+                if traf.asas.ARV[i]:
+                    flex = free_area/tot_area
+                    self.flexibility_global[inlat[i],inlon[i],int(round(traf.alt[i]/1000)),self.time_stamp] = flex
                 else:
-                    flex.append(1) #No conflict area -> full flexibility
+                    flex = 1 #No conflict area -> full flexibility
                     self.flexibility_global[inlat[i],inlon[i],self.time_stamp] = 1
-                print('Flexibility of aircraft '+traf.id[i]+' is: '+str(flex[-1]))
-                i_in = i_in + 1
+                #print('Flexibility of aircraft '+traf.id[i]+' is: '+str(flex))
+        #Compute average flexibility for timestep
+        #self.avg_flex = np.mean(self.flexibility_global[:,:,self.time_stamp])
 
         return
 
@@ -350,12 +389,13 @@ class Simulation():
         alpham  = 0.4999 * np.pi        # [rad] Maximum half-angle for VO
         betalos = np.pi / 4             # [rad] Minimum divertion angle for LOS (45 deg seems optimal)
         adsbmax = 40. * nm              # [m] Maximum ADS-B range
-        beta    =  np.pi/4 + betalos/2
+        beta    = np.pi/4 + betalos/2
 
         #From traf
         lat     = traf.lat
         lon     = traf.lon
         ntraf   = traf.ntraf
+        vs     = traf.vs
 
         #A default priocode must be defined for this CR method, otherwise it won't work with the predefined one
         if asas.priocode not in asas.strategy_dict:
@@ -417,10 +457,12 @@ class Simulation():
         # Not sure abs/rel, but qdr is defined from [-180,180] deg, w.r.t. North
 
         [qdr, dist] = geo.qdrdist_matrix(lat[ind1], lon[ind1], lat[ind2], lon[ind2])
+        vs = self.qdrvs_matrix(vs[ind1],vs[ind2])
 
         # Put result of function from matrix to ndarray
         qdr  = np.reshape(np.array(qdr), np.shape(ind1))
         dist = np.reshape(np.array(dist), np.shape(ind1))
+        vs  = np.reshape(np.array(vs), np.shape(ind1))
         # SI-units from [deg] to [rad]
         qdr  = np.deg2rad(qdr)
         # Get distance from [nm] to [m]
@@ -440,9 +482,9 @@ class Simulation():
         cosalpha = np.cos(alpha)
 
         #construct with CS1
-        self.CS1(asas, traf, ind1, ind2, adsbmax, dist, qdr, cosalpha, xyc, circle_tup, circle_lst, beta, hsepm)
+        self.CS1(asas, traf, ind1, ind2, adsbmax, dist, qdr, vs, cosalpha, xyc, circle_tup, circle_lst, beta, hsepm)
 
-    def CS1(self,asas, traf, ind1, ind2, adsbmax, dist, qdr, cosalpha, xyc, circle_tup, circle_lst, beta, hsepm):
+    def CS1(self,asas, traf, ind1, ind2, adsbmax, dist, qdr, vs, cosalpha, xyc, circle_tup, circle_lst, beta, hsepm):
 
         # Relevant info from traf and ASAS
         gsnorth = traf.gsnorth
@@ -471,6 +513,9 @@ class Simulation():
                 i_other = np.delete(np.arange(0, ntraf), i)
                 # Aircraft that are within ADS-B range
                 ac_adsb = np.where(dist[ind] < adsbmax)[0]
+                ac_alt1 = np.where(vs[ind] >= 0)[0]
+                ac_joint = np.concatenate([ac_adsb,ac_alt1])
+                ac_adsb =  [item for item, count in Counter(ac_joint).items() if count > 1] #Only for A/C in ads-b range and VS converging
                 # Now account for ADS-B range in indices of other aircraft (i_other)
                 ind = ind[ac_adsb]
                 i_other = i_other[ac_adsb]
@@ -629,3 +674,8 @@ class Simulation():
         np.put(ind2, inds, np.arange(ntraf * -1 + 3, 1))
         ind2 = np.cumsum(ind2, out=ind2)
         return ind1, ind2
+
+    def qdrvs_matrix(self,vs1,vs2):
+        #Realtive vertical speed: Check if 2 goes towards 1
+        dvs = -vs1+vs2
+        return dvs
