@@ -69,10 +69,10 @@ def init_plugin():
         # The command name for your function
         'SSDEXPORT': [
             # A short usage string. This will be printed if you type HELP <name> in the BlueSky console
-            'SSDEXPORT ON/OFF NL ON/OFF',
+            'SSDEXPORT ON/OFF NL',
 
-            # A list of the argument types your function accepts. For a description of this, see ...
-            '[onoff, txt, onoff]',
+            # Plugin on/off, name of area, area on/off
+            '[onoff, txt]',
 
             # The name of your function in this plugin
             data.initialize,
@@ -98,14 +98,13 @@ class Simulation():
     def __init__(self):
         self.time_stamp = 0
         self.active = False
-        self.area = True #Activation of area
         self.print = False
         self.areaName = str('')
         self.flexibility_global = np.array([])
         self.dlat = 0
         self.dlon = 0
         self.coord = []
-        self.min_lat = 0
+        self.max_lat = 0
         self.min_lon = 0
         self.map = False
         self.avg_flex = 0
@@ -155,16 +154,16 @@ class Simulation():
     def flexMatrix(self,coords,t):
         #Generates the matrix in which the flexibility information is stored
         #Discretise coordinates so that flex[lat,lon,alt,iteration] = feas/(feas+unfeas)
-        self.d = 1/40 #Discretise coordinates for every 1/100 of degree -> 0,6 nm
+        self.d = 1/20 #Discretise coordinates for every 1/100 of degree -> 0,6 nm
         self.nlat = (np.amax(coords[:,0]) - np.amin(coords[:,0]))/self.d
         self.nlon = (np.amax(coords[:,1]) - np.amin(coords[:,1]))/self.d
-        self.min_lat = np.amin(coords[:,0])
+        self.max_lat = np.amax(coords[:,0])
         self.min_lon = np.amin(coords[:,1])
-        nalt = int(50000/1000) # Altitude in 100ft intervals (flight levels)
+        nalt = int(50000/1000) # Altitude in 1000ft intervals (flight levels)
         sim_length = t/30
         print('before')
-        flex = np.ones((int(self.nlat)+1,int(self.nlon)+1,nalt+1,int(sim_length)))
-        print('middle')
+        flex = np.ones((int(self.nlon)+1,int(self.nlat)+1,nalt+1,int(sim_length)),dtype=np.float32)
+        print('mid')
         flex[:] = np.NaN #Only actual data will be number, otherwise NaN
         print('flex created')
         return flex
@@ -177,16 +176,13 @@ class Simulation():
             return True, "SSDSEQ is currently " + ("ON" if self.active else "OFF")
 
         self.active = True if args[0]==True else False
-        self.area = True if args[2]==True else False #Area of country, only process within
         self.areaName = str(args[1])
 
-
-        if self.area == True:
-            #Generate area of NL that will be used to filter traffic
-            self.coord = np.array([54.96964, 5.00976, 51.45904, 1.99951, 50.71375, 6.0424, 52.2058, 7.09716, 53.2963, 7.2509, 54.9922, 6.5478])
-            areafilter.defineArea(self.areaName, 'POLY', self.coord)
-            self.flexibility_global = self.flexMatrix(np.reshape(self.coord,(6,2)),24*60*60) #24 hours
-            stack.stack('AREA '+str(self.areaName))
+        #Generate area of NL that will be used to filter traffic
+        self.coord = np.array([54.96964, 5.00976, 51.45904, 1.99951, 50.71375, 6.0424, 52.2058, 7.09716, 53.2963, 7.2509, 54.9922, 6.5478])
+        areafilter.defineArea(self.areaName, 'POLY', self.coord)
+        self.flexibility_global = self.flexMatrix(np.reshape(self.coord,(6,2)),24*60*60) #24 hours
+        stack.stack('AREA '+str(self.areaName))
 
         return True
 
@@ -198,23 +194,18 @@ class Simulation():
             flex_map = np.nanmean(self.flexibility_global,axis=3) #Mean for all time steps discarding NaN
             if os.path.exists('flexibility3d.npy'): #If there's a file already, remove it
                 os.remove('flexibility3d.npy')
+            stack.stack('ECHO 3D array saved')
             np.save('flexibility3d.npy', flex_map)
             flex_map = np.nanmean(flex_map,axis=2) #Mean for all altitudes discarding NaN
             if os.path.exists('flexibility2d.npy'): #If there's a file already, remove it
                 os.remove('flexibility2d.npy')
             np.save('flexibility2d.npy', flex_map)
             x,y = self.discreteCoord(self.coord[0::2], self.coord[1::2])
-            airspace = np.resize(np.stack((x,y)),(1,2*len(x)))
+            airspace = np.resize(np.stack((y,x)),(1,2*len(x)))
             np.save('airspace.npy', airspace)
             #fig, ax0 = plt.subplots(1)
             print(self.time_stamp) ####### Check time stamp and size of x in plot
 
-            #c = ax0.pcolor(flex_map)
-            #ax0.plot(self.coord[0::2],self.coord[1::2],'k')
-            #ax0.set_title('Complexity map')
-            #plt.colorbar(c)
-            #fig.tight_layout()
-            #plt.show()
             self.maps = False
             stack.stack('ECHO Data saved')
 
@@ -314,10 +305,10 @@ class Simulation():
 
                 if traf.asas.ARV[i]:
                     flex = free_area/tot_area
-                    self.flexibility_global[inlat[i],inlon[i],int(round(traf.alt[i]/1000)),self.time_stamp] = flex
+                    self.flexibility_global[inlon[i],inlat[i],int(round(traf.alt[i]/(1000*0.3048))),self.time_stamp] = flex
                 else:
                     flex = 1 #No conflict area -> full flexibility
-                    self.flexibility_global[inlat[i],inlon[i],self.time_stamp] = 1
+                    self.flexibility_global[inlon[i],inlat[i],int(round(traf.alt[i]/(1000*0.3048))),self.time_stamp] = 1
                 #print('Flexibility of aircraft '+traf.id[i]+' is: '+str(flex))
         #Compute average flexibility for timestep
         #self.avg_flex = np.mean(self.flexibility_global[:,:,self.time_stamp])
@@ -325,7 +316,7 @@ class Simulation():
         return
 
     def discreteCoord(self,lat,lon):
-        in_lat = ((lat-self.min_lat)/self.d) #Indice in matrix of latitude
+        in_lat = ((self.max_lat-lat)/self.d) #Indice in matrix of latitude -> from up to down
         in_lon = ((lon-self.min_lon)/self.d) #Indice in matrix of longitude
         return in_lat.astype(int), in_lon.astype(int)
 
