@@ -7,7 +7,7 @@ from bluesky.tools.aero import ft, nm
 from bluesky.tools.trafficarrays import TrafficArrays, RegisterElementParameters
 
 # Register settings defaults
-settings.set_variable_defaults(prefer_compiled=False, asas_dt=5.0,
+settings.set_variable_defaults(prefer_compiled=False, asas_dt=1.0,
                                asas_dtlookahead=300.0, asas_mar=1.2,
                                asas_pzr=5.0, asas_pzh=1000.0,
                                asas_vmin=200.0, asas_vmax=500.0)
@@ -31,7 +31,6 @@ from . import Eby
 from . import MVP
 from . import Swarm
 from . import SSD
-from . import SeqSSD_faster
 
 
 class ASAS(TrafficArrays):
@@ -46,7 +45,6 @@ class ASAS(TrafficArrays):
     # If pyclipper is installed add it to CRmethods-dict
     if SSD.loaded_pyclipper():
         CRmethods["SSD"] = SSD
-        CRmethods["SEQSSD"] = SeqSSD_faster
 
     @classmethod
     def addCDMethod(asas, name, module):
@@ -132,14 +130,6 @@ class ASAS(TrafficArrays):
         self.tLOS = np.array([])  # Time to start LoS
         self.qdr = np.array([])  # Bearing from ownship to intruder
         self.dist = np.array([])  # Horizontal distance between ""
-
-        #For SEQSSD CR
-        self.layers_dict = {0: 'No solution', 1: 'Full FRV layer', 2: 'FRV zones within tla', 3: 'Current conflicts within tla',
-                            4: 'FRV zones at minimum time to LoS', 5: 'Current conflicts at minimum time to LoS',
-                            6: 'Current conflicts at low distance to LoS', 7: 'Current conflicts at low dcpa'}
-        self.strategy_dict = {'CS1': [1],'CS2': [2],'CS3': [3],'CS4': [4],'CS5': [5],'CS6': [6],'CS7': [7],
-                          'SRS1': [1,2,3,4,5,6],'SRS2': [2,4,6],'SRS3': [3,5,6],'SRS4': [4,5,7]} #key entries are priocodes
-        self.layer_count = [0]*len(self.layers_dict)
 
     def toggle(self, flag=None):
         if flag is None:
@@ -326,8 +316,6 @@ class ASAS(TrafficArrays):
         '''Set the prio switch and the type of prio '''
         if self.cr_name == "SSD":
             options = ["RS1","RS2","RS3","RS4","RS5","RS6","RS7","RS8","RS9"]
-        elif self.cr_name == "SEQSSD":
-            options = ["CS1","CS2","CS3","CS4","CS5","CS6","CS7","SRS1","SRS2","SRS3","SRS4"]
         else:
             options = ["FF1", "FF2", "FF3", "LAY1", "LAY2"]
         if flag is None:
@@ -345,14 +333,6 @@ class ASAS(TrafficArrays):
                              "\n     RS9:  Counterclockwise turning" + \
                              "\nPriority is currently " + ("ON" if self.swprio else "OFF") + \
                              "\nPriority code is currently: " + str(self.priocode)
-            elif self.cr_name == "SEQSSD":
-                return True, "PRIORULES [ON/OFF] [PRIOCODE]"  + \
-                             "\nAvailable priority codes: " + \
-                             "\n CS1-CS7 for coordination strategies" + \
-                             "\n RS1-RS4 for sequential strategies" + \
-                             "\nPriority is currently " + ("ON" if self.swprio else "OFF") + \
-                             "\nPriority code is currently: " + str(self.priocode)
-
             else:
                 return True, "PRIORULES [ON/OFF] [PRIOCODE]"  + \
                              "\nAvailable priority codes: " + \

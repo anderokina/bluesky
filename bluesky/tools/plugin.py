@@ -6,6 +6,7 @@ from glob import glob
 import imp
 import bluesky as bs
 from bluesky import settings
+from bluesky.tools import plotter
 
 # Register settings defaults
 settings.set_variable_defaults(plugin_path='plugins', enabled_plugins=['datafeed'])
@@ -101,53 +102,6 @@ def init(mode):
         success = load(pname.upper())
         print(success[1])
 
-<<<<<<< HEAD
-if settings.is_sim:
-    # Sim implementation of plugin management
-    preupdate_funs = dict()
-    update_funs    = dict()
-    reset_funs     = dict()
-
-    def load(name):
-        ''' Load a plugin. '''
-        try:
-            if name in active_plugins:
-                return False, 'Plugin %s already loaded' % name
-            descr  = plugin_descriptions.get(name)
-            if not descr:
-                return False, 'Error loading plugin: plugin %s not found.' % name
-            # Load the plugin
-            mod    = imp.find_module(descr.module_name, [descr.module_path])
-            plugin = imp.load_module(descr.module_name, *mod)
-            # Initialize the plugin
-            config, stackfuns    = plugin.init_plugin()
-            active_plugins[name] = plugin
-            dt     = max(config.get('update_interval', 0.0), bs.sim.simdt)
-            prefun = config.get('preupdate')
-            updfun = config.get('update')
-            rstfun = config.get('reset')
-            if prefun:
-                preupdate_funs[name] = [bs.sim.simt + dt, dt, prefun]
-            if updfun:
-                update_funs[name]    = [bs.sim.simt + dt, dt, updfun]
-            if rstfun:
-                reset_funs[name]     = rstfun
-            # Add the plugin's stack functions to the stack
-            bs.stack.append_commands(stackfuns)
-            return True, 'Successfully loaded plugin %s' % name
-        except ImportError as e:
-            print('BlueSky plugin system failed to load', name, ':', e)
-            return False, 'Failed to load %s' % name
-
-    def remove(name):
-        ''' Remove a loaded plugin. '''
-        if name not in active_plugins:
-            return False, 'Plugin %s not loaded' % name
-        preset = reset_funs.pop(name, None)
-        if preset:
-            # Call module reset first to clear plugin state just in case.
-            preset()
-=======
 
 # Sim implementation of plugin management
 preupdate_funs = dict()
@@ -159,7 +113,6 @@ def load(name):
     try:
         if name in active_plugins:
             return False, 'Plugin %s already loaded' % name
->>>>>>> a116fbca7f1ea01cbe461b6edd621463d62b24fb
         descr  = plugin_descriptions.get(name)
         if not descr:
             return False, 'Error loading plugin: plugin %s not found.' % name

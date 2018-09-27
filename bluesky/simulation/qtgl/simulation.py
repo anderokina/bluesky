@@ -5,11 +5,7 @@ import bluesky as bs
 from bluesky import settings, stack
 from bluesky.tools import datalog, areafilter, plugin, plotter
 from bluesky.tools.misc import txt2tim, tim2txt
-<<<<<<< HEAD
-from bluesky.network import Node
-=======
 
->>>>>>> a116fbca7f1ea01cbe461b6edd621463d62b24fb
 
 # Minimum sleep interval
 MINSLEEP = 1e-3
@@ -37,100 +33,6 @@ def Simulation(detached):
             self.state = bs.INIT
             self.prevstate = None
 
-<<<<<<< HEAD
-            if bs.traf.ntraf > 0 or len(stack.get_scendata()[0]) > 0:
-                self.op()
-                if self.benchdt > 0.0:
-                    self.fastforward(self.benchdt)
-                    self.bencht = time.time()
-
-        if self.state == bs.OP:
-            stack.checkfile(self.simt)
-
-        # Always update stack
-        stack.process()
-
-        if self.state == bs.OP:
-
-            bs.traf.update(self.simt, self.simdt)
-
-            # Update plugins
-            plugin.update(self.simt)
-
-            # Update Plotter
-            plotter.update(self.simt)
-
-            # Update loggers
-            datalog.postupdate()
-
-            # Update time for the next timestep
-            self.simt += self.simdt
-
-            # Update clock
-            self.simtclock = (self.deltclock + self.simt) % onedayinsec
-
-        # Always update syst
-        self.syst += self.sysdt
-
-        # Inform main of our state change
-        if not self.state == self.prevstate:
-            self.sendState()
-            self.prevstate = self.state
-
-    def stop(self):
-        self.state = bs.END
-        datalog.reset()
-
-        # Close savefile which may be open for recording
-        bs.stack.saveclose()  # Close reording file if it is on
-
-    def op(self):
-        self.syst = time.time()
-        self.ffmode = False
-        self.state = bs.OP
-        self.setDtMultiplier(1.0)
-
-    def pause(self):
-        self.syst = time.time()
-        self.state = bs.HOLD
-
-    def reset(self):
-        self.state = bs.INIT
-        self.syst = -1.0
-        self.simt = 0.0
-        self.simdt = settings.simdt
-        self.deltclock = 0.0
-        self.simtclock = self.simt
-        self.ffmode = False
-        self.setDtMultiplier(1.0)
-        plugin.reset()
-        bs.navdb.reset()
-        bs.traf.reset()
-        stack.reset()
-        datalog.reset()
-        areafilter.reset()
-        bs.scr.reset()
-
-    def setDt(self, dt):
-        self.simdt = abs(dt)
-        self.sysdt = self.simdt / self.dtmult
-
-    def setDtMultiplier(self, mult):
-        self.dtmult = mult
-        self.sysdt  = self.simdt / self.dtmult
-
-    def setFixdt(self, flag, nsec=None):
-        if flag:
-            self.fastforward(nsec)
-        else:
-            self.op()
-
-    def fastforward(self, nsec=None):
-        self.ffmode = True
-        if nsec is not None:
-            self.ffstop = self.simt + nsec
-        else:
-=======
             # Set starting system time [seconds]
             self.syst = -1.0
 
@@ -155,7 +57,6 @@ def Simulation(detached):
 
             # Flag indicating running at fixed rate or fast time
             self.ffmode = False
->>>>>>> a116fbca7f1ea01cbe461b6edd621463d62b24fb
             self.ffstop = None
 
         def step(self):

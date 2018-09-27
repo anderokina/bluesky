@@ -26,12 +26,9 @@ class Client(object):
         # Signals
         self.nodes_changed = Signal()
         self.server_discovered = Signal()
-<<<<<<< HEAD
-=======
         self.signal_quit = Signal()
         self.event_received = Signal()
         self.stream_received = Signal()
->>>>>>> a116fbca7f1ea01cbe461b6edd621463d62b24fb
 
         # Tell bluesky that this client will manage the network I/O
         bluesky.net = self
@@ -111,6 +108,8 @@ class Client(object):
                     nodes_myserver = next(iter(pydata.values())).get('nodes')
                     if not self.act and nodes_myserver:
                         self.actnode(nodes_myserver[0])
+                elif eventname == b'QUIT':
+                    self.signal_quit.emit()
                 else:
                     self.event(eventname, pydata, self.sender_id)
 

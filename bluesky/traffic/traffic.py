@@ -16,7 +16,6 @@ from bluesky.tools.aero import fpm, kts, ft, g0, Rearth, nm, \
 
 from bluesky.tools.trafficarrays import TrafficArrays, RegisterElementParameters
 
-
 from .windsim import WindSim
 from .conditional import Condition
 from .trails import Trails
@@ -32,24 +31,23 @@ from bluesky import settings
 # Register settings defaults
 settings.set_variable_defaults(performance_model='bluesky', snapdt=1.0, instdt=1.0, skydt=1.0, asas_pzr=5.0, asas_pzh=1000.0)
 
-# try:
-if settings.performance_model == 'bluesky':
-    print('Using BlueSky performance model')
-    from .performance.BADA.perfbs import PerfBS as Perf
+try:
+    if settings.performance_model == 'bluesky':
+        print('Using BlueSky performance model')
+        from .performance.legacy.perfbs import PerfBS as Perf
 
-elif settings.performance_model == 'bada':
-    print('Using BADA Perfromance model')
-    from .performance.BADA.perfbada import PerfBADA as Perf
+    elif settings.performance_model == 'bada':
+        print('Using BADA Perfromance model')
+        from .performance.bada.perfbada import PerfBADA as Perf
 
-elif settings.performance_model == 'nap':
-    print('Using Nifty Aircrafft Perfromance (NAP) model')
-    from .performance.nap import PerfNAP as Perf
+    elif settings.performance_model == 'openap':
+        print('Using Open Aircrafft Perfromance (OpenAP) model')
+        from .performance.openap import OpenAP as Perf
 
-
-# except ImportError as err:
-#     print(err.args[0])
-#     print('Falling back to BlueSky performance model')
-#     from .performance.legacy.perfbs import PerfBS as Perf
+except ImportError as err:
+    print(err.args[0])
+    print('Falling back to BlueSky performance model')
+    from .performance.legacy.perfbs import PerfBS as Perf
 
 
 class Traffic(TrafficArrays):
@@ -167,7 +165,6 @@ class Traffic(TrafficArrays):
         self.bphase = np.deg2rad(np.array([15, 35, 35, 35, 15, 45]))
 
         self.reset()
-
 
     def reset(self):
         # This ensures that the traffic arrays (which size is dynamic)
@@ -376,8 +373,8 @@ class Traffic(TrafficArrays):
         self.asas.update(simt)   # Airboren Separation Assurance
         self.pilot.APorASAS()    # Decide autopilot or ASAS
 
-        #---------- NAP Performance Update ------------------------
-        if settings.performance_model == 'nap':
+        #---------- OpenAP Performance Update ------------------------
+        if settings.performance_model == 'openap':
             self.perf.update(simt)
 
         #---------- Limit Speeds ------------------------------

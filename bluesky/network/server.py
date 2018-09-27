@@ -58,11 +58,7 @@ class Server(Thread):
     def addnodes(self, count=1):
         ''' Add [count] nodes to this server. '''
         for _ in range(count):
-<<<<<<< HEAD
-            p = Popen([sys.executable, 'BlueSky_qtgl.py', '--node'])
-=======
             p = Popen([sys.executable, 'BlueSky.py', '--sim'])
->>>>>>> a116fbca7f1ea01cbe461b6edd621463d62b24fb
             self.spawned_processes.append(p)
 
     def run(self):
