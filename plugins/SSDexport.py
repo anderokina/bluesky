@@ -224,7 +224,6 @@ class Simulation():
 
                 N_angle = 180
                 #Define new ARV taking into consideration the heading constraints and the current heading of each aircraft
-###### To try: create semicircle and then use with ARV
                 asas.trncons = 90 #Turning angle constraint
                 trn_cons = np.radians(asas.trncons)
                 angles2 = np.arange(np.radians(traf.hdg[i])-trn_cons, np.radians(traf.hdg[i])+trn_cons, 2*trn_cons/N_angle)

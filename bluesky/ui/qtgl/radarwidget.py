@@ -1,9 +1,9 @@
 from os import path
 try:
-    from PyQt5.QtCore import Qt, QEvent, qCritical, QTimer, pyqtSlot, QT_VERSION
+    from PyQt5.QtCore import Qt, QEvent, qCritical, QTimer, QT_VERSION
     from PyQt5.QtOpenGL import QGLWidget
 except ImportError:
-    from PyQt4.QtCore import Qt, QEvent, qCritical, QTimer, pyqtSlot, QT_VERSION
+    from PyQt4.QtCore import Qt, QEvent, qCritical, QTimer, QT_VERSION
     from PyQt4.QtOpenGL import QGLWidget
 
 from ctypes import c_float, c_int, Structure
@@ -54,7 +54,7 @@ palette.set_default_colours(
 # Static defines
 MAX_NAIRCRAFT         = 10000
 MAX_NCONFLICTS        = 25000
-MAX_ROUTE_LENGTH      = 100
+MAX_ROUTE_LENGTH      = 500
 MAX_POLYPREV_SEGMENTS = 100
 MAX_ALLPOLYS_SEGMENTS = 2000
 MAX_CUST_WPT          = 1000
@@ -155,8 +155,10 @@ class RadarWidget(QGLWidget):
         self.grabGesture(Qt.PanGesture)
         self.grabGesture(Qt.PinchGesture)
         # self.grabGesture(Qt.SwipeGesture)
+        self.setMouseTracking(True)
 
         # Connect to the io client's activenode changed signal
+        console.cmdline_stacked.connect(self.cmdline_stacked)
         bs.net.actnodedata_changed.connect(self.actnodedataChanged)
         bs.net.stream_received.connect(self.on_simstream_received)
 
@@ -168,9 +170,20 @@ class RadarWidget(QGLWidget):
 
         # Shape data change
         if 'SHAPE' in changed_elems:
-            if len(nodedata.polydata):
-                update_buffer(self.allpolysbuf, nodedata.polydata)
-            self.allpolys.set_vertex_count(len(nodedata.polydata) // 2)
+            if nodedata.polys:
+                contours, fills = zip(*nodedata.polys.values())
+                # Create contour buffer
+                buf = np.concatenate(contours)
+                update_buffer(self.allpolysbuf, buf)
+                self.allpolys.set_vertex_count(len(buf) // 2)
+
+                # Create fill buffer
+                buf = np.concatenate(fills)
+                update_buffer(self.allpfillbuf, buf)
+                self.allpfill.set_vertex_count(len(buf) // 2)
+            else:
+                self.allpolys.set_vertex_count(0)
+                self.allpfill.set_vertex_count(0)
 
         # Trail data change
         if 'TRAILS' in changed_elems:
@@ -242,6 +255,7 @@ class RadarWidget(QGLWidget):
 
         self.polyprevbuf   = create_empty_buffer(MAX_POLYPREV_SEGMENTS * 8, usage=gl.GL_DYNAMIC_DRAW)
         self.allpolysbuf   = create_empty_buffer(MAX_ALLPOLYS_SEGMENTS * 16, usage=gl.GL_DYNAMIC_DRAW)
+        self.allpfillbuf   = create_empty_buffer(MAX_ALLPOLYS_SEGMENTS * 24, usage=gl.GL_DYNAMIC_DRAW)
         self.routebuf      = create_empty_buffer(MAX_ROUTE_LENGTH * 8, usage=gl.GL_DYNAMIC_DRAW)
         self.routewplatbuf = create_empty_buffer(MAX_ROUTE_LENGTH * 4, usage=gl.GL_DYNAMIC_DRAW)
         self.routewplonbuf = create_empty_buffer(MAX_ROUTE_LENGTH * 4, usage=gl.GL_DYNAMIC_DRAW)
@@ -272,6 +286,7 @@ class RadarWidget(QGLWidget):
 
         # Fixed polygons
         self.allpolys = RenderObject(gl.GL_LINES, vertex=self.allpolysbuf, color=palette.polys)
+        self.allpfill = RenderObject(gl.GL_TRIANGLES, vertex=self.allpfillbuf, color=np.append(palette.polys, 50))
 
         # ------- SSD object -----------------------------
         self.ssd = RenderObject(gl.GL_POINTS)
@@ -490,7 +505,10 @@ class RadarWidget(QGLWidget):
         self.polyprev.draw()
 
         # --- DRAW CUSTOM SHAPES (WHEN AVAILABLE) -----------------------------
-        self.allpolys.draw()
+        if actdata.show_poly > 0:
+            self.allpolys.draw()
+            if actdata.show_poly > 1:
+                self.allpfill.draw()
 
         # --- DRAW THE SELECTED AIRCRAFT ROUTE (WHEN AVAILABLE) ---------------
         if actdata.show_traf:
@@ -601,7 +619,6 @@ class RadarWidget(QGLWidget):
         self.width, self.height = width // pixel_ratio, height // pixel_ratio
         self.ar = float(width) / max(1, float(height))
         self.globaldata.set_win_width_height(self.width, self.height)
-
         self.viewport = (0, 0, width, height)
 
         # Update zoom
@@ -941,7 +958,6 @@ class RadarWidget(QGLWidget):
                 if g.gestureType() == Qt.PinchGesture:
                     zoom = g.scaleFactor() * (zoom or 1.0)
                     if CORRECT_PINCH:
-                        print ('Correct pinch')
                         zoom /= g.lastScaleFactor()
                 elif g.gestureType() == Qt.PanGesture:
                     if abs(g.delta().y() + g.delta().x()) > 1e-1:
@@ -1003,7 +1019,6 @@ class RadarWidget(QGLWidget):
 
                 except ValueError:
                     pass
-            return True
 
         # For all other events call base class event handling
         return super(RadarWidget, self).event(event)

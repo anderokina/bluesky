@@ -28,6 +28,7 @@ class PerfNAP(PerfBase):
 
         with RegisterElementParameters(self):
             self.actypes = np.array([], dtype=str)
+            self.phase = np.array([])
             self.lifttype = np.array([])  # lift type, fixwing [1] or rotor [2]
             self.engnum = np.array([], dtype=int)  # number of engines
             self.engthrust = np.array([])  # static engine thrust
@@ -37,17 +38,24 @@ class PerfNAP(PerfBase):
             self.ff_coeff_b = np.array([])  # icao fuel flows coefficient b
             self.ff_coeff_c = np.array([])  # icao fuel flows coefficient c
             self.engpower = np.array([])    # engine power, rotor ac
+            self.cd0 = np.array([])  # zero drag coefficient
+            self.cd0_clean = np.array([])  # Cd0, clean configuration
+            self.cd0_gd = np.array([])  # Cd0, ground mode
+            self.cd0_to = np.array([])  # Cd0, taking-off
+            self.cd0_ic = np.array([])  # Cd0, initial climb
+            self.cd0_ap = np.array([])  # Cd0, landing
+            self.cd0_ld = np.array([])  # Cd0, landing
+            self.k = np.array([])  # induced drag coeff
 
     def create(self, n=1):
         # cautious! considering multiple created aircraft with same type
 
         super(PerfNAP, self).create(n)
 
-        actype = bs.traf.type[-n]
+        actype = bs.traf.type[-1].upper()
 
         # check fixwing or rotor, default fixwing if not found
         if actype in self.coeff.actypes_rotor:
-
             self.lifttype[-n:] = coeff.LIFT_ROTOR
             self.mass[-n:] = 0.5 * (self.coeff.acs_rotor[actype]['oew'] + self.coeff.acs_rotor[actype]['mtow'])
             self.engnum[-n:] = int(self.coeff.acs_rotor[actype]['n_engines'])
@@ -70,13 +78,32 @@ class PerfNAP(PerfBase):
 
             self.engnum[-n:] = int(self.coeff.acs_fixwing[actype]['n_engines'])
 
-            self.ff_coeff_a[-n:] = np.ones(n) * coeff_a
-            self.ff_coeff_b[-n:] = np.ones(n) * coeff_b
-            self.ff_coeff_c[-n:] = np.ones(n) * coeff_c
+            self.ff_coeff_a[-n:] = coeff_a
+            self.ff_coeff_b[-n:] = coeff_b
+            self.ff_coeff_c[-n:] = coeff_c
 
             all_ac_engs = list(self.coeff.acs_fixwing[actype]['engines'].keys())
             self.engthrust[-n:] = self.coeff.acs_fixwing[actype]['engines'][all_ac_engs[0]]['thr']
             self.engbpr[-n:] = self.coeff.acs_fixwing[actype]['engines'][all_ac_engs[0]]['bpr']
+
+            # init drag polar coefficients
+            if actype in self.coeff.dragpolar_fixwing.keys():
+                self.cd0_clean[-n:] = self.coeff.dragpolar_fixwing[actype]['cd0_clean']
+                self.cd0_gd[-n:] = self.coeff.dragpolar_fixwing[actype]['cd0_gd']
+                self.cd0_to[-n:] = self.coeff.dragpolar_fixwing[actype]['cd0_to']
+                self.cd0_ic[-n:] = self.coeff.dragpolar_fixwing[actype]['cd0_ic']
+                self.cd0_ap[-n:] = self.coeff.dragpolar_fixwing[actype]['cd0_ap']
+                self.cd0_ld[-n:] = self.coeff.dragpolar_fixwing[actype]['cd0_ld']
+                self.k[-n:] = self.coeff.dragpolar_fixwing[actype]['k']
+            else:
+                self.cd0_clean[-n:] = self.coeff.dragpolar_fixwing['NA']['cd0_clean']
+                self.cd0_gd[-n:] = self.coeff.dragpolar_fixwing['NA']['cd0_gd']
+                self.cd0_to[-n:] = self.coeff.dragpolar_fixwing['NA']['cd0_to']
+                self.cd0_ic[-n:] = self.coeff.dragpolar_fixwing['NA']['cd0_ic']
+                self.cd0_ap[-n:] = self.coeff.dragpolar_fixwing['NA']['cd0_ap']
+                self.cd0_ld[-n:] = self.coeff.dragpolar_fixwing['NA']['cd0_ld']
+                self.k[-n:] = self.coeff.dragpolar_fixwing['NA']['k']
+
 
         # append update actypes, after removing unkown types
         self.actypes[-n:] = [actype] * n
@@ -84,8 +111,17 @@ class PerfNAP(PerfBase):
 
 
     def delete(self, idx):
+<<<<<<< HEAD:bluesky/traffic/performance/nap/perfnap.py
         super(PerfNAP, self).delete(idx)
+=======
+        super(OpenAP, self).delete(idx)
+        self.n_ac -= 1
+>>>>>>> a116fbca7f1ea01cbe461b6edd621463d62b24fb:bluesky/traffic/performance/openap/perfoap.py
 
+
+    def reset(self):
+        super(OpenAP, self).reset()
+        self.n_ac = 0
 
     def update(self, simt=1):
         super(PerfNAP, self).update(simt)
@@ -102,18 +138,41 @@ class PerfNAP(PerfBase):
         self.hmax = limits[:, 4]
         self.axmax = limits[:, 5]
 
-        # compute thrust
-        #   = number of engines x engine static thrust x thrust ratio
         idx_fixwing = np.where(self.lifttype==coeff.LIFT_FIXWING)[0]
-        self.thrustratio[idx_fixwing] = thrust.compute_thrust_ratio(
-            self.phase[idx_fixwing], self.engbpr[idx_fixwing], bs.traf.tas[idx_fixwing], bs.traf.alt[idx_fixwing]
-        )
-        self.thrust[idx_fixwing] = self.engnum[idx_fixwing] * self.engthrust[idx_fixwing] * self.thrustratio[idx_fixwing]
 
-        # compute fuel flow
+        # ----- compute drag -----
+        # update drage coefficient based on flight phase
+        self.cd0[self.phase==ph.TO] = self.cd0_to[self.phase==ph.TO]
+        self.cd0[self.phase==ph.IC] = self.cd0_ic[self.phase==ph.IC]
+        self.cd0[self.phase==ph.AP] = self.cd0_ap[self.phase==ph.AP]
+        self.cd0[self.phase==ph.LD] = self.cd0_ld[self.phase==ph.LD]
+        self.cd0[self.phase==ph.GD] = self.cd0_gd[self.phase==ph.GD]
+        self.cd0[self.phase==ph.CL] = self.cd0_clean[self.phase==ph.CL]
+        self.cd0[self.phase==ph.CR] = self.cd0_clean[self.phase==ph.CR]
+        self.cd0[self.phase==ph.DE] = self.cd0_clean[self.phase==ph.DE]
+        self.cd0[self.phase==ph.NA] = self.cd0_clean[self.phase==ph.NA]
+
+        rho = aero.vdensity(bs.traf.alt[idx_fixwing])
+        vtas = bs.traf.tas[idx_fixwing]
+        rhovs = 0.5 * rho * vtas**2 * self.Sref[idx_fixwing]
+        cl = self.mass[idx_fixwing] * aero.g0 / rhovs
+        self.drag[idx_fixwing] = rhovs * (self.cd0[idx_fixwing] + self.k[idx_fixwing] * cl**2)
+
+        # ----- compute thrust -----
+        #  eq: number of engines x engine static thrust x thrust ratio
+        self.thrustratio[idx_fixwing] = thrust.compute_thrust_ratio(
+            self.phase[idx_fixwing], self.engbpr[idx_fixwing],
+            bs.traf.tas[idx_fixwing], bs.traf.alt[idx_fixwing],
+            bs.traf.vs[idx_fixwing], self.engnum[idx_fixwing]*self.engthrust[idx_fixwing]
+
+        )
+        self.thrust[idx_fixwing] = self.engnum[idx_fixwing]*self.engthrust[idx_fixwing] * self.thrustratio[idx_fixwing]
+
+        # ----- compute duel flow -----
         self.fuelflow = self.engnum * (self.ff_coeff_a * self.thrustratio**2 \
                                        + self.ff_coeff_b * self.thrustratio  \
                                        + self.ff_coeff_c)
+
 
         # TODO: implement thrust computation for rotor aircraft
         # idx_rotor = np.where(self.lifttype==coeff.LIFT_ROTOR)[0]
@@ -122,6 +181,14 @@ class PerfNAP(PerfBase):
         # update bank angle, due to phase change
         self.bank = np.where((self.phase==ph.TO) | (self.phase==ph.LD), 15, self.bank)
         self.bank = np.where((self.phase==ph.IC) | (self.phase==ph.CR) | (self.phase==ph.AP), 35, self.bank)
+
+        # ----- debug statements -----
+        # print(bs.traf.id)
+        # print(self.phase)
+        # print(self.thrust.astype(int))
+        # print(np.round(self.fuelflow, 2))
+        # print(self.drag.astype(int))
+        # print()
 
         return None
 
