@@ -154,7 +154,7 @@ class Simulation():
     def flexMatrix(self,coords,t):
         #Generates the matrix in which the flexibility information is stored
         #Discretise coordinates so that flex[lat,lon,alt,iteration] = feas/(feas+unfeas)
-        self.d = 1/50 #Discretise coordinates for every 1/100 of degree -> 0,6 nm
+        self.d = 1/20 #Discretise coordinates for every 1/100 of degree -> 0,6 nm
         self.nlat = (np.amax(coords[:,0]) - np.amin(coords[:,0]))/self.d
         self.nlon = (np.amax(coords[:,1]) - np.amin(coords[:,1]))/self.d
         self.max_lat = np.amax(coords[:,0])
