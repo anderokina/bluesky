@@ -5,10 +5,10 @@ from scipy.ndimage.filters import minimum_filter, maximum_filter
 
 
 
-flex = np.load('flexibility2d.npy')
+flex = np.load('Results/2d_7sept_8-13.npy')
 coord = np.array([54.96964, 5.00976, 51.45904, 1.99951, 50.71375, 6.0424, 52.2058, 7.09716, 53.2963, 7.2509, 54.9922, 6.5478,54.96964, 5.00976])
 coords = np.reshape(coord,(7,2))
-d = 1/20 #Discretise coordinates for every 1/100 of degree -> 0,6 nm
+d = 1/50 #Discretise coordinates for every 1/100 of degree -> 0,6 nm
 nlat = (np.amax(coords[:,0]) - np.amin(coords[:,0]))/d
 lats = np.amax(coords[:,0])-np.arange(nlat)*d
 nlon = (np.amax(coords[:,1]) - np.amin(coords[:,1]))/d
@@ -22,8 +22,8 @@ m = Basemap(projection = 'lcc',\
         llcrnrlat=50,urcrnrlat=55,\
         llcrnrlon=0,urcrnrlon= 8,\
         resolution='l')
-#m.shadedrelief(scale=0.5)
-m.pcolormesh(lon, lat, np.transpose(flex), latlon=True, cmap='RdBu_r')
+m.shadedrelief(scale=0.5)
+m.pcolormesh(lon, lat, np.transpose(flex), latlon=True, cmap='hot')
 plt.clim(0, 1)
 m.drawcoastlines(linewidth=2,color='lightgray')
 m.drawcountries(linewidth=2,color='lightgray')
