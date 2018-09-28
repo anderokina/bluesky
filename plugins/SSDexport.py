@@ -351,17 +351,19 @@ class Simulation():
         asas.los = [False]*ntraf
 
         # Area calculation
-        asas.FRV_area     = np.zeros(ntraf, dtype=np.float32)
+        areaInterest = False
+        if areaInterest:
+            asas.FRV_area     = np.zeros(ntraf, dtype=np.float32)
 
-        asas.ARV_area     = np.zeros(ntraf, dtype=np.float32)
-        asas.ARV_area_min = np.zeros(ntraf, dtype=np.float32)
-        asas.ARV_area_tla = np.zeros(ntraf, dtype=np.float32)
-        asas.ARV_area_calc = np.zeros(ntraf, dtype=np.float32)
-        asas.ARV_area_calc_min = np.zeros(ntraf, dtype=np.float32)
-        asas.ARV_area_calc_glb = np.zeros(ntraf, dtype=np.float32)
-        asas.ARV_area_calc_dcpa = np.zeros(ntraf, dtype=np.float32)
-        asas.ARV_area_dlos = np.zeros(ntraf, dtype=np.float32)
-        asas.layers_area = [None]*len(asas.layers_dict)
+            asas.ARV_area     = np.zeros(ntraf, dtype=np.float32)
+            asas.ARV_area_min = np.zeros(ntraf, dtype=np.float32)
+            asas.ARV_area_tla = np.zeros(ntraf, dtype=np.float32)
+            asas.ARV_area_calc = np.zeros(ntraf, dtype=np.float32)
+            asas.ARV_area_calc_min = np.zeros(ntraf, dtype=np.float32)
+            asas.ARV_area_calc_glb = np.zeros(ntraf, dtype=np.float32)
+            asas.ARV_area_calc_dcpa = np.zeros(ntraf, dtype=np.float32)
+            asas.ARV_area_dlos = np.zeros(ntraf, dtype=np.float32)
+            asas.layers_area = [None]*len(asas.layers_dict)
 
 
 
@@ -386,10 +388,6 @@ class Simulation():
         lon     = traf.lon
         ntraf   = traf.ntraf
         vs     = traf.vs
-
-        #A default priocode must be defined for this CR method, otherwise it won't work with the predefined one
-        if asas.priocode not in asas.strategy_dict:
-            asas.priocode = "SRS1"
 
         # # Use velocity limits for the ring-shaped part of the SSD
         # Discretize the circles using points on circle

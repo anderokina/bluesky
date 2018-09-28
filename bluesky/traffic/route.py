@@ -75,7 +75,6 @@ class Route:
 
 #        print "addwptStack:",args
         # Check FLYBY or FLYOVER switch, instead of adding a waypoint
-
         if len(args) == 1:
             isflyby = args[0].replace('-', '')
 

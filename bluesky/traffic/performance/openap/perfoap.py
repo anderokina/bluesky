@@ -63,12 +63,18 @@ class OpenAP(PerfBase):
 
         else:
             # convert to known aircraft type
-            if actype not in self.coeff.actypes_fixwing:
+            if actype not in self.coeff.actypes_fixwing or actype=='B788' or actype=='B789':
                 actype = 'A320'
 
             # populate fuel flow model
-            es = self.coeff.acs_fixwing[actype]['engines']
-            e = es[list(es.keys())[0]]
+            try:
+                es = self.coeff.acs_fixwing[actype]['engines']
+                e = es[list(es.keys())[0]]
+            except:
+                es = self.coeff.acs_fixwing['A320']['engines']
+                e = es[list(es.keys())[0]]
+                print(actype)
+                actype = 'A320'
             coeff_a, coeff_b, coeff_c = thrust.compute_eng_ff_coeff(e['ff_idl'], e['ff_app'], e['ff_co'], e['ff_to'])
 
             self.lifttype[-n:] = coeff.LIFT_FIXWING
@@ -236,29 +242,55 @@ class OpenAP(PerfBase):
         idx_fixwing = np.where(self.lifttype==coeff.LIFT_FIXWING)[0]
         unique_fixwing_mdls = np.unique(actypes[idx_fixwing])
         for mdl in unique_fixwing_mdls:
-            # for each aircraft type construct the speed, roc, and alt limits based on phase
-            limits[:, 0] = np.where((actypes==mdl) & (phases==ph.NA), 0, limits[:, 0])
-            limits[:, 0] = np.where((actypes==mdl) & (phases==ph.TO), self.coeff.limits_fixwing[mdl]['vminto'], limits[:, 0])
-            limits[:, 0] = np.where((actypes==mdl) & (phases==ph.IC), self.coeff.limits_fixwing[mdl]['vminic'], limits[:, 0])
-            limits[:, 0] = np.where((actypes==mdl) & ((phases==ph.CL)|(phases==ph.CR)|(phases==ph.DE)), self.coeff.limits_fixwing[mdl]['vminer'], limits[:, 0])
-            limits[:, 0] = np.where((actypes==mdl) & (phases==ph.AP), self.coeff.limits_fixwing[mdl]['vminap'], limits[:, 0])
-            limits[:, 0] = np.where((actypes==mdl) & (phases==ph.LD), self.coeff.limits_fixwing[mdl]['vminld'], limits[:, 0])
-            limits[:, 0] = np.where((actypes==mdl) & (phases==ph.GD), 0, limits[:, 0])
+            try:
+                # for each aircraft type construct the speed, roc, and alt limits based on phase
+                limits[:, 0] = np.where((actypes==mdl) & (phases==ph.NA), 0, limits[:, 0])
+                limits[:, 0] = np.where((actypes==mdl) & (phases==ph.TO), self.coeff.limits_fixwing[mdl]['vminto'], limits[:, 0])
+                limits[:, 0] = np.where((actypes==mdl) & (phases==ph.IC), self.coeff.limits_fixwing[mdl]['vminic'], limits[:, 0])
+                limits[:, 0] = np.where((actypes==mdl) & ((phases==ph.CL)|(phases==ph.CR)|(phases==ph.DE)), self.coeff.limits_fixwing[mdl]['vminer'], limits[:, 0])
+                limits[:, 0] = np.where((actypes==mdl) & (phases==ph.AP), self.coeff.limits_fixwing[mdl]['vminap'], limits[:, 0])
+                limits[:, 0] = np.where((actypes==mdl) & (phases==ph.LD), self.coeff.limits_fixwing[mdl]['vminld'], limits[:, 0])
+                limits[:, 0] = np.where((actypes==mdl) & (phases==ph.GD), 0, limits[:, 0])
 
-            limits[:, 1] = np.where((actypes==mdl) & (phases==ph.NA), self.coeff.limits_fixwing[mdl]['vmaxer'], limits[:, 1])
-            limits[:, 1] = np.where((actypes==mdl) & (phases==ph.TO), self.coeff.limits_fixwing[mdl]['vmaxto'], limits[:, 1])
-            limits[:, 1] = np.where((actypes==mdl) & (phases==ph.IC), self.coeff.limits_fixwing[mdl]['vmaxic'], limits[:, 1])
-            limits[:, 1] = np.where((actypes==mdl) & ((phases==ph.CL)|(phases==ph.CR)|(phases==ph.DE)), self.coeff.limits_fixwing[mdl]['vmaxer'], limits[:, 1])
-            limits[:, 1] = np.where((actypes==mdl) & (phases==ph.AP), self.coeff.limits_fixwing[mdl]['vmaxap'], limits[:, 1])
-            limits[:, 1] = np.where((actypes==mdl) & (phases==ph.LD), self.coeff.limits_fixwing[mdl]['vmaxld'], limits[:, 1])
-            limits[:, 1] = np.where((actypes==mdl) & (phases==ph.GD), self.coeff.limits_fixwing[mdl]['vmaxer'], limits[:, 1])
+                limits[:, 1] = np.where((actypes==mdl) & (phases==ph.NA), self.coeff.limits_fixwing[mdl]['vmaxer'], limits[:, 1])
+                limits[:, 1] = np.where((actypes==mdl) & (phases==ph.TO), self.coeff.limits_fixwing[mdl]['vmaxto'], limits[:, 1])
+                limits[:, 1] = np.where((actypes==mdl) & (phases==ph.IC), self.coeff.limits_fixwing[mdl]['vmaxic'], limits[:, 1])
+                limits[:, 1] = np.where((actypes==mdl) & ((phases==ph.CL)|(phases==ph.CR)|(phases==ph.DE)), self.coeff.limits_fixwing[mdl]['vmaxer'], limits[:, 1])
+                limits[:, 1] = np.where((actypes==mdl) & (phases==ph.AP), self.coeff.limits_fixwing[mdl]['vmaxap'], limits[:, 1])
+                limits[:, 1] = np.where((actypes==mdl) & (phases==ph.LD), self.coeff.limits_fixwing[mdl]['vmaxld'], limits[:, 1])
+                limits[:, 1] = np.where((actypes==mdl) & (phases==ph.GD), self.coeff.limits_fixwing[mdl]['vmaxer'], limits[:, 1])
 
-            limits[:, 2] = np.where((actypes==mdl), self.coeff.limits_fixwing[mdl]['vsmin'], limits[:, 2])
-            limits[:, 3] = np.where((actypes==mdl), self.coeff.limits_fixwing[mdl]['vsmax'], limits[:, 3])
+                limits[:, 2] = np.where((actypes==mdl), self.coeff.limits_fixwing[mdl]['vsmin'], limits[:, 2])
+                limits[:, 3] = np.where((actypes==mdl), self.coeff.limits_fixwing[mdl]['vsmax'], limits[:, 3])
 
-            limits[:, 4] = np.where((actypes==mdl), self.coeff.limits_fixwing[mdl]['hmax'], limits[:, 4])
+                limits[:, 4] = np.where((actypes==mdl), self.coeff.limits_fixwing[mdl]['hmax'], limits[:, 4])
 
-            limits[:, 5] = np.where((actypes==mdl), self.coeff.limits_fixwing[mdl]['axmax'], limits[:, 5])
+                limits[:, 5] = np.where((actypes==mdl), self.coeff.limits_fixwing[mdl]['axmax'], limits[:, 5])
+            except:
+                # for each aircraft type construct the speed, roc, and alt limits based on phase
+                limits[:, 0] = np.where((actypes=='A320') & (phases==ph.NA), 0, limits[:, 0])
+                limits[:, 0] = np.where((actypes=='A320') & (phases==ph.TO), self.coeff.limits_fixwing['A320']['vminto'], limits[:, 0])
+                limits[:, 0] = np.where((actypes=='A320') & (phases==ph.IC), self.coeff.limits_fixwing['A320']['vminic'], limits[:, 0])
+                limits[:, 0] = np.where((actypes=='A320') & ((phases==ph.CL)|(phases==ph.CR)|(phases==ph.DE)), self.coeff.limits_fixwing['A320']['vminer'], limits[:, 0])
+                limits[:, 0] = np.where((actypes=='A320') & (phases==ph.AP), self.coeff.limits_fixwing['A320']['vminap'], limits[:, 0])
+                limits[:, 0] = np.where((actypes=='A320') & (phases==ph.LD), self.coeff.limits_fixwing['A320']['vminld'], limits[:, 0])
+                limits[:, 0] = np.where((actypes=='A320') & (phases==ph.GD), 0, limits[:, 0])
+
+                limits[:, 1] = np.where((actypes=='A320') & (phases==ph.NA), self.coeff.limits_fixwing['A320']['vmaxer'], limits[:, 1])
+                limits[:, 1] = np.where((actypes=='A320') & (phases==ph.TO), self.coeff.limits_fixwing['A320']['vmaxto'], limits[:, 1])
+                limits[:, 1] = np.where((actypes=='A320') & (phases==ph.IC), self.coeff.limits_fixwing['A320']['vmaxic'], limits[:, 1])
+                limits[:, 1] = np.where((actypes=='A320') & ((phases==ph.CL)|(phases==ph.CR)|(phases==ph.DE)), self.coeff.limits_fixwing['A320']['vmaxer'], limits[:, 1])
+                limits[:, 1] = np.where((actypes=='A320') & (phases==ph.AP), self.coeff.limits_fixwing['A320']['vmaxap'], limits[:, 1])
+                limits[:, 1] = np.where((actypes=='A320') & (phases==ph.LD), self.coeff.limits_fixwing['A320']['vmaxld'], limits[:, 1])
+                limits[:, 1] = np.where((actypes=='A320') & (phases==ph.GD), self.coeff.limits_fixwing['A320']['vmaxer'], limits[:, 1])
+
+                limits[:, 2] = np.where((actypes=='A320'), self.coeff.limits_fixwing['A320']['vsmin'], limits[:, 2])
+                limits[:, 3] = np.where((actypes=='A320'), self.coeff.limits_fixwing['A320']['vsmax'], limits[:, 3])
+
+                limits[:, 4] = np.where((actypes=='A320'), self.coeff.limits_fixwing['A320']['hmax'], limits[:, 4])
+
+                limits[:, 5] = np.where((actypes=='A320'), self.coeff.limits_fixwing['A320']['axmax'], limits[:, 5])
+
 
         idx_rotor = np.where(self.lifttype==coeff.LIFT_ROTOR)[0]
         unique_rotor_mdls = np.unique(actypes[idx_rotor])
@@ -279,7 +311,7 @@ class OpenAP(PerfBase):
         acc_ground = 2
         acc_air = 0.5
 
-        accs = np.zeros(self.n_ac)
+        accs = np.zeros(len(self.actypes))
         accs[self.phase==ph.GD] = acc_ground
         accs[self.phase!=ph.GD] = acc_air
 
