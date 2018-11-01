@@ -8,11 +8,11 @@ from bluesky.tools import geo, areafilter
 import numpy as np
 from datetime import datetime
 from bluesky.traffic.asas import SSD
-
+import time
+from matplotlib import path
 
 
 from collections import Counter
-from tempfile import TemporaryFile
 
 #Plotting packages
 import matplotlib.pyplot as plt
@@ -40,7 +40,7 @@ def init_plugin():
     # Configuration parameters
     config = {
         # The name of your plugin
-        'plugin_name':     'SSDEXPORT',
+        'plugin_name':     'SSDEXPORT_test',
 
         # The type of this plugin. For now, only simulation plugins are possible.
         'plugin_type':     'sim',
@@ -48,7 +48,7 @@ def init_plugin():
         # Update interval in seconds. By default, your plugin's update function(s)
         # are called every timestep of the simulation. If your plugin needs less
         # frequent updates provide an update interval.
-        'update_interval': 30, #If changed also change variable in flexMatrix!!
+        'update_interval': 45, #If changed also change variable in flexMatrix!!
 
         # The update function is called after traffic is updated. Use this if you
         # want to do things as a result of what happens in traffic. If you need to
@@ -111,6 +111,7 @@ class Simulation():
         self.avg_flex = 0
         self.dalt = 3000*0.3048
         self.ACcount = np.array([])
+        self.cells = 0
 
     def update(self):
 
@@ -124,13 +125,13 @@ class Simulation():
 
         if self.active == True:
             # Define heading and speed changes
-            vmin = traf.asas.vmax #traf.spd+30 if traf.spd+30<450 else 450
-            vmax = traf.asas.vmax #traf.spd-30 if traf.spd-30>250 else 250
+            self.vmin = 130
+            self.vmax = 300
             N_angle = 180
 
             angles = np.arange(0, 2 * np.pi, 2 * np.pi / N_angle)
             xyc = np.transpose(np.reshape(np.concatenate((np.sin(angles), np.cos(angles))), (2, N_angle)))
-            SSD_lst = [list(map(list, np.flipud(xyc * vmax))), list(map(list, xyc * vmin))]
+            SSD_lst = [list(map(list, np.flipud(xyc * self.vmax))), list(map(list, xyc * self.vmin))]
 
             # Outer circle: vmax
             SSD_outer = np.array(SSD_lst[0])
@@ -141,10 +142,11 @@ class Simulation():
             x_SSD_inner = np.append(SSD_inner[:, 0], np.array(SSD_inner[0, 0]))
             y_SSD_inner = np.append(SSD_inner[:, 1], np.array(SSD_inner[0, 1]))
             # Initialize SSD variables with ntraf
-            self.SSDVariables(traf.asas, traf.ntraf)
             # Construct ASAS
-            SSD.constructSSD(traf.asas, traf, 'CC')
-            self.visualizeSSD(x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner,traf.asas)
+            t = time.time()
+            self.visualizeSSD(x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner)
+            el = time.time()-t
+            print('Time elapsed = '+str(el))
 
 
     def preupdate(self):
@@ -156,14 +158,14 @@ class Simulation():
     def flexMatrix(self,coords,t):
         #Generates the matrix in which the flexibility information is stored
         #Discretise coordinates so that flex[lat,lon,alt,iteration] = feas/(feas+unfeas)
-        self.d = 1/20 #Discretise coordinates for every 1/20 of degree -> 3 nm
-        self.nlat = (np.amax(coords[:,0]) - np.amin(coords[:,0]))/self.d
-        self.nlon = (np.amax(coords[:,1]) - np.amin(coords[:,1]))/self.d
+        self.d = 1/5 #Discretise coordinates for every 1/20 of degree -> 3 nm
+        self.nlat = np.int((np.amax(coords[:,0]) - np.amin(coords[:,0]))/self.d)+1
+        self.nlon = np.int((np.amax(coords[:,1]) - np.amin(coords[:,1]))/self.d)+1
         self.max_lat = np.amax(coords[:,0])
         self.min_lon = np.amin(coords[:,1])
-        nalt = int(50000/1000) # Altitude in 1000ft intervals (flight levels)
-        sim_length = t/30+3
-        flex = np.ones((int(self.nlon)+1,int(self.nlat)+1,nalt+1,int(sim_length)),dtype=np.float32)
+        self.nalt = int(50000/10000) # Altitude in 5000ft intervals (flight levels)
+        sim_length = t/45+3
+        flex = np.ones((self.nlon,self.nlat,self.nalt+1,int(sim_length)),dtype=np.float32)
         flex[:] = np.NaN #Only actual data will be number, otherwise NaN
         return flex
 
@@ -201,9 +203,41 @@ class Simulation():
         if self.active:
             self.ACcount = np.zeros(int(self.t_sim*60*60/30)+5)
             self.flexibility_global = self.flexMatrix(np.reshape(self.coord,(int(len(self.coord)/2),2)),self.t_sim*60*60)
+            self.grid = self.createGrid()
         stack.stack('AREA NL')
 
         return True
+
+    def createGrid(self):
+        #Make grid of cells only inside the dutch airspace, get rid of the rest
+        polygon = [[self.coord[1::2][i],self.coord[0::2][i]] for i in range(len(self.coord[0::2]))]
+        p = path.Path(polygon)
+        #Generate list of latitude and longitude indices
+        lats = np.arange(self.nlat)
+        lons = np.arange(self.nlon)
+        #Genrate list of altitudes
+        alts = np.arange(self.nalt)
+        #Create the grid with all cells
+        gridx,gridy,gridz = np.meshgrid(lons,lats,alts)
+        grid0 = np.vstack([gridx.ravel(),gridy.ravel(),gridz.ravel()])
+        #Convert to actual coordinates
+        latsn, lonsn = self.coord2latlon(grid0[1],grid0[0])
+        points = np.array([[lonsn[i]+self.d/2,latsn[i]-self.d/2] for i in range(len(latsn))])
+        print(points)
+        #Select points within polygon
+        inside = p.contains_points(points) #Bool mask for points inside
+        #print(np.shape(grid0[0]))
+        #print(np.shape(inside))
+        #Select grid points that are inside the polygon
+        gridx = grid0[0][inside]
+        gridy = grid0[1][inside]
+        gridz = grid0[2][inside]
+        grid = np.vstack([gridx.ravel(),gridy.ravel(),gridz.ravel()])
+
+        np.save('grid_pts.npy',np.array([latsn[inside],lonsn[inside]]))
+        self.cells = len(gridx)
+        print(np.shape(grid))
+        return grid
 
     def printMap(self, *args):
         #Prints the map with the available information of flexibility
@@ -230,111 +264,89 @@ class Simulation():
             stack.stack('ECHO Data saved')
 
 
-    def visualizeSSD(self, x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner,asas):
+    def visualizeSSD(self, x_SSD_outer,y_SSD_outer,x_SSD_inner,y_SSD_inner):
         #Generate the SSD velocity obstacles and convert them to polygons
         #so that their areas can be computed
-
-        #Obtain list of aircraft inside the defined area
         inNL = areafilter.checkInside('NL', traf.lat, traf.lon, traf.alt)
+        #Obtain list of aircraft inside the defined area
         #Obtain the indices of lat and lon of aircraft for flexibiity matrix
-        inlat, inlon = self.discreteCoord(traf.lat, traf.lon)
         self.ACcount[self.time_stamp-1] = np.sum(inNL)
-        for i in range(traf.ntraf):
-            if inNL[i]: #If aircraft in interest area (NL airspace)
+        FRV_all,ARV_all = self.constructSSD(traf)
+        #Generate the maximum and minimum speed circles Polygon
+        N_angle = 180
+        vmax = self.vmax
+        vmin = self.vmin
+        # # Use velocity limits for the ring-shaped part of the SSD
+        # Discretize the circles using points on circle
+        angles = np.arange(0, 2 * np.pi, 2 * np.pi / N_angle)
+        # Put points of unit-circle in a (180x2)-array (CW)
+        xyc = np.transpose(np.reshape(np.concatenate((np.sin(angles), np.cos(angles))), (2, N_angle)))
+        # Map them into the format pyclipper wants. Outercircle CCW, innercircle CW
+        circle_lst_out = list(map(list, np.flipud(xyc * vmax)))
+        circle_lst_in = list(map(list , xyc * vmin))
+        circ_out_pol = Polygon(circle_lst_out)
+        circ_in_pol = Polygon(circle_lst_in)
+        circ_diff = circ_out_pol.difference(circ_in_pol)
+        tot_area = circ_out_pol.area - circ_in_pol.area
 
-                N_angle = 180
-                #Define new ARV taking into consideration the heading constraints and the current heading of each aircraft
-                asas.trncons = 90 #Turning angle constraint
-                trn_cons = np.radians(asas.trncons)
-                angles2 = np.arange(np.radians(traf.hdg[i])-trn_cons, np.radians(traf.hdg[i])+trn_cons, 2*trn_cons/N_angle)
-                # Put points of unit-circle in a (180x2)-array (CW)
-                xyc2 = np.transpose(np.reshape(np.concatenate((np.sin(angles2), np.cos(angles2))), (2, len(angles2))))
-                #For tupple
-                inner_semicircle = (tuple(map(tuple , xyc2 * asas.vmin)))
-                outer_semicircle = tuple(map(tuple, np.flipud(xyc2 * asas.vmax)))
-                new_circle_tup = inner_semicircle + outer_semicircle
-                #For list
-                inner_semicircle = list(map(list , xyc2 * asas.vmin))
-                outer_semicircle = list(map(list, np.flipud(xyc2 * asas.vmax)))
-                new_circle_lst = inner_semicircle + outer_semicircle
-                sem_circ_pol = Polygon(new_circle_lst)
-                tot_area = sem_circ_pol.area
+        for i in range(self.cells): #Evaluate the VO of each grid point
+            if i%50==0:
+                print('Cell2 '+str(i))
+            FRV = FRV_all[i]
+            ARV = ARV_all[i]
 
-                if traf.asas.ARV[i]:
-                    for j in range(len(traf.asas.ARV[i])):
-                        FRV_1 = np.array(traf.asas.ARV[i][j])
-                        x_FRV1 = np.append(FRV_1[:,0] , np.array(FRV_1[0,0]))
-                        y_FRV1 = np.append(FRV_1[:,1] , np.array(FRV_1[0,1]))
-                        FRV1 = FRV_1.tolist()
-                        if j>0:
-                            un_FRV = un_FRV.union(Polygon(FRV1))
-                        elif j==0:
-                            un_FRV = Polygon(FRV1)
-                    free_area = un_FRV.area
+            if ARV:
+                for j in range(len(ARV)):
+                    FRV_1 = np.array(ARV[j])
+                    x_FRV1 = np.append(FRV_1[:,0] , np.array(FRV_1[0,0]))
+                    y_FRV1 = np.append(FRV_1[:,1] , np.array(FRV_1[0,1]))
+                    FRV1 = FRV_1.tolist()
+                    if j>0:
+                        un_FRV = un_FRV.union(Polygon(FRV1))
+                    elif j==0:
+                        un_FRV = Polygon(FRV1)
+                un_FRV = un_FRV.intersection(circ_diff) #Intersect ARV with complete solution space
+                free_area = un_FRV.area
 
-                    fig, ax = plt.subplots()
-                    if type(un_FRV)==Polygon and self.print:
-                        x,y = un_FRV.exterior.xy
-                        plt.plot(x,y, color ='red')
-                        ax.fill(x, y, color = '#C0C0C0') #gray
-                        x,y = sem_circ_pol.exterior.xy
-                        plt.plot(x,y,color = 'black')
-                        plt.title((traf.id[i]))
-                        plt.show()
-                    elif self.print:
-                        for k in range(len(list(un_FRV))):
-                            x,y = un_FRV[k].exterior.xy
-                            plt.plot(x,y, color = 'red')
-                            ax.fill(x, y, color = '#C0C0C0') #gray
-                            x,y = sem_circ_pol.exterior.xy
-                            plt.plot(x,y,color = 'black')
-                        plt.title((traf.id[i]))
-                        plt.show()
-
-
-                if traf.asas.FRV[i] and 0==1:
-                    for j in range(len(traf.asas.FRV[i])):
-                        FRV_2 = np.array(traf.asas.FRV[i][j])
-                        x_FRV2 = np.append(FRV_2[:,0] , np.array(FRV_2[0,0]))
-                        y_FRV2 = np.append(FRV_2[:,1] , np.array(FRV_2[0,1]))
-
-
-                        FRV2 = FRV_2.tolist()
-                        if j>0:
-                            un_FRV2 = un_FRV2.union(Polygon(FRV2))
-                        elif j==0:
-                            un_FRV2 = Polygon(FRV2)
-
-                    conf_area = un_FRV2.area
-
-                    if type(un_FRV2)==Polygon and self.print and 1==0: #If not polygon -> multipolygon
-                        x,y = un_FRV2.exterior.xy
-                        plt.plot(x,y, color = '000000')
-                        ax.fill(x, y, color = '#C0C0C0') #gray
-                        plt.title(traf.id[i])
-                        #plt.show()
-                    elif self.print and 1==0:
-                        for k in range(len(list(un_FRV2))):
-                            x,y = un_FRV2[k].exterior.xy
-                            plt.plot(x,y,color = '000000')
-                            ax.fill(x, y, color = '#C0C0C0') #gray
-                        plt.title(traf.id[i])
-                        #plt.show()
-                #print('ARV= '+str(free_area)+', FRV= '+str(conf_area)+', total = '+str(free_area+conf_area))
-
-                if traf.asas.ARV[i]:
-                    flex = free_area/tot_area
-                    if int(free_area)==207815:
-                        #No aircraft in conflict, so SSD returns a whole circle as free area
-                        self.flexibility_global[inlon[i],inlat[i],int(round(traf.alt[i]/(1000*0.3048))),self.time_stamp-1] = 1
-                    else:
-                        self.flexibility_global[inlon[i],inlat[i],int(round(traf.alt[i]/(1000*0.3048))),self.time_stamp-1] = flex
+                flex = free_area/tot_area
+                if flex>1:
+                    #Wrong return of ARV, no aircraft in conflict -> flex=1
+                    self.flexibility_global[self.grid[0][i],self.grid[1][i],int(round(self.grid[2][i]/(5000*0.3048))),self.time_stamp-1] = 1
                 else:
-                    flex = 1 #No conflict area -> full flexibility
-                    self.flexibility_global[inlon[i],inlat[i],int(round(traf.alt[i]/(1000*0.3048))),self.time_stamp-1] = 1
-                #print('Flexibility of aircraft '+traf.id[i]+' is: '+str(flex))
+                    self.flexibility_global[self.grid[0][i],self.grid[1][i],int(round(self.grid[2][i]/(5000*0.3048))),self.time_stamp-1] = flex
 
+            else: #No velocity obstacles -> Full flexibility
+                flex = 1
+                self.flexibility_global[self.grid[0][i],self.grid[1][i],int(round(self.grid[2][i]/(5000*0.3048))),self.time_stamp-1] = 1
 
+            if self.print:
+                #Only print if flexibility is lower than 0.25
+                fig, ax = plt.subplots()
+                if type(un_FRV)==Polygon:
+                    x,y = un_FRV.exterior.xy
+                    plt.plot(x,y, color ='red')
+                    ax.fill(x, y, color = '#C0C0C0') #gray
+                    x,y = circ_out_pol.exterior.xy
+                    plt.plot(x,y,color = 'black')
+                    x,y = circ_in_pol.exterior.xy
+                    plt.plot(x,y,color = 'black')
+                    ax.fill(x, y, color = 'white') #gray
+                    plt.title(str(self.grid[0][i])+', '+str(self.grid[1][i])+', '+str(self.grid[2][i]))
+                    plt.show()
+                else: #Multipolygon
+                    for k in range(len(list(un_FRV))):
+                        x,y = un_FRV[k].exterior.xy
+                        plt.plot(x,y, color = 'red')
+                        ax.fill(x, y, color = '#C0C0C0') #gray
+                        x,y = circ_out_pol.exterior.xy
+                        plt.plot(x,y,color = 'green')
+                        x,y = circ_in_pol.exterior.xy
+                        plt.plot(x,y,color = 'black')
+                        ax.fill(x, y, color = 'white') #gray
+                    plt.title(str(self.grid[0][i])+', '+str(self.grid[1][i])+', '+str(self.grid[2][i]))
+                    plt.show()
+
+            #print('Flex of '+str(self.grid[0][i])+','+str(self.grid[1][i])+','+str(self.grid[2][i])+' = '+str(self.flexibility_global[self.grid[0][i],self.grid[1][i],int(round(self.grid[2][i]/(5000*0.3048))),self.time_stamp-1]))
         return
 
     def discreteCoord(self,lat,lon):
@@ -343,89 +355,59 @@ class Simulation():
         return in_lat.astype(int), in_lon.astype(int)
 
     def coord2latlon(self,iny,inx):
-        lat = self.max_lat+iny*self.d
+        lat = self.max_lat-iny*self.d
         lon = inx*self.d+self.min_lon
-        return lat,lon
+        return np.array(lat),np.array(lon)
 
 
-    def SSDVariables(self,asas, ntraf):
-        """ Initialize variables for SSD """
-        # Need to do it here, since ASAS.reset doesn't know ntraf
+    def constructSSD(self, traf):
+        """ Calculates the FRV and ARV of the SSD """
 
         #Forbidden Reachable Velocity regions
-        asas.FRV          = [None] * ntraf
+        FRV          = [None]*self.cells
 
         #Allowed Reachable Velocity regions
-        asas.ARV          = [None] * ntraf
-        #asas.ARV_min        = [None] * ntraf #NEW
-        #asas.ARV_tla        = [None] * ntraf #NEW
+        ARV          = [None]*self.cells
 
-        # For calculation purposes
-        asas.ARV_calc     = [None] * ntraf
-        asas.ARV_calc_min = [None]* ntraf
-        asas.ARV_calc_glb = [None]* ntraf
-        asas.ARV_calc_dlos = [None]* ntraf
-        asas.ARV_calc_dcpa = [None]* ntraf
+        latcell, loncell = self.coord2latlon(self.grid[0],self.grid[1])
+        altcell = self.grid[2]*5000*0.3048 #[m]
 
-        #Stores which layer of resolution each aircraft chose
-        asas.reso_layer = [None]* ntraf
-        asas.inrange      = [None] * ntraf
-
-
-        #Say if ac is in a LoS
-        asas.los = [False]*ntraf
-
-        # Area calculation
-        areaInterest = False
-        if areaInterest:
-            asas.FRV_area     = np.zeros(ntraf, dtype=np.float32)
-
-            asas.ARV_area     = np.zeros(ntraf, dtype=np.float32)
-            asas.ARV_area_min = np.zeros(ntraf, dtype=np.float32)
-            asas.ARV_area_tla = np.zeros(ntraf, dtype=np.float32)
-            asas.ARV_area_calc = np.zeros(ntraf, dtype=np.float32)
-            asas.ARV_area_calc_min = np.zeros(ntraf, dtype=np.float32)
-            asas.ARV_area_calc_glb = np.zeros(ntraf, dtype=np.float32)
-            asas.ARV_area_calc_dcpa = np.zeros(ntraf, dtype=np.float32)
-            asas.ARV_area_dlos = np.zeros(ntraf, dtype=np.float32)
-
-    def constructSSD(self, traf, priocode = "RS1"):
-        """ Calculates the FRV and ARV of the SSD """
         N = 0
         # Parameters
         N_angle = 180                   # [-] Number of points on circle (discretization)
-        vmin    = 92.6                  # 180kts - [m/s] Defined in asas.py
-        vmax    = 180                   # 350kts - [m/s] Defined in asas.py
+        vmin    = self.vmin             # [m/s] Defined in asas.py
+        vmax    = self.vmax             # [m/s] Defined in asas.py
         hsep    = 5*1852                # [m] Horizontal separation (5 NM)
-        margin  = 1                     # [-] Safety margin for evasion
+        margin  = 0.5                   # [-] Safety margin for evasion
         hsepm   = hsep * margin         # [m] Horizontal separation with safety margin
         alpham  = 0.4999 * np.pi        # [rad] Maximum half-angle for VO
         betalos = np.pi / 4             # [rad] Minimum divertion angle for LOS (45 deg seems optimal)
-        adsbmax = 40. * nm              # [m] Maximum ADS-B range
+        adsbmax = 100. * nm             # [m] Maximum ADS-B range
         beta    =  np.pi/4 + betalos/2
-        if priocode == "RS7" or priocode == "RS8":
-            adsbmax /= 2
-        tau = 15*60
+        tau = 15*60                     # 15 min to LoS, for rounding off of VO
 
         # Relevant info from traf
         gsnorth = traf.gsnorth
-        vs      = traf.vs
         gseast  = traf.gseast
         lat     = traf.lat
         lon     = traf.lon
+        alt     = traf.alt
         ntraf   = traf.ntraf
         hdg     = traf.hdg
         gs      = traf.tas
-        alt     = traf.alt
-        gs_ap   = traf.ap.tas
-        hdg_ap  = traf.ap.trk
-        apnorth = np.cos(hdg_ap / 180 * np.pi) * gs_ap
-        apeast  = np.sin(hdg_ap / 180 * np.pi) * gs_ap
+        vs      = traf.vs
+
+
 
         # Local variables, will be put into asas later
-        FRV_loc          = [None] * traf.ntraf
-        ARV_loc          = [None] * traf.ntraf
-
+        FRV_loc          = [None] * self.cells
+        ARV_loc          = [None] * self.cells
+        FRV_locr         = [None] * self.cells
+        ARV_locr         = [None] * self.cells
+        # For calculation purposes
+        ARV_calc_loc     = [None] * self.cells
+        FRV_area_loc     = np.zeros(self.cells, dtype=np.float32)
+        ARV_area_loc     = np.zeros(self.cells, dtype=np.float32)
 
         # # Use velocity limits for the ring-shaped part of the SSD
         # Discretize the circles using points on circle
@@ -445,10 +427,6 @@ class Simulation():
             # Map them into the format ARV wants. Outercircle CCW, innercircle CW
             ARV_loc[0] = circle_lst
             FRV_loc[0] = []
-            ARV_calc_loc[0] = ARV_loc[0]
-            # Calculate areas and store in asas
-            FRV_area_loc[0] = 0
-            ARV_area_loc[0] = np.pi * (vmax **2 - vmin ** 2)
             return
 
         # Function qdrdist_matrix needs 4 vectors as input (lat1,lon1,lat2,lon2)
@@ -457,15 +435,307 @@ class Simulation():
         #                           ind2 = [1,2,3,4,2,3,4,3,4,4]
         # This way the qdrdist is only calculated once between every aircraft
         # To get all combinations, use this function to get the indices
-        ind1, ind2 = qdrdist_matrix_indices(ntraf)
+        ind1, ind2 = np.meshgrid(np.arange(ntraf),np.arange(self.cells))
+        indx = np.vstack([ind1.ravel(),ind2.ravel()])
+        ind1 = indx[0]
+        ind2 = indx[1]
         # Get absolute bearing [deg] and distance [nm]
         # Not sure abs/rel, but qdr is defined from [-180,180] deg, w.r.t. North
-        [qdr, dist] = geo.qdrdist_matrix(lat[ind1], lon[ind1], lat[ind2], lon[ind2])
+        [qdr, dist] = geo.qdrdist_matrix(latcell[ind2]-0.5, loncell[ind2]+0.5, lat[ind1], lon[ind1])
+        #print(str(np.amin(dist))+' between '+str(latcell[ind2[np.where(np.amin(dist))]])+','+str(loncell[ind2[np.where(np.amin(dist))]])+' and '+str(lon[ind1[np.where(np.amin(dist))]])+','+str(lat[ind1[np.where(np.amin(dist))]]))
+        #print(len(np.where(dist<75)))
+        # Put result of function from matrix to ndarray
+        qdr  = np.reshape(np.array(qdr), np.shape(ind1))
+        dist = np.reshape(np.array(dist), np.shape(ind1))
+        # SI-units from [deg] to [rad]
+        qdr  = np.deg2rad(qdr)
+        # Get distance from [nm] to [m]
+        dist = dist * nm
+        #Altitude difference between cells and traffic (center of cell in terms of altitude)
+        dalt = (altcell[ind2]+5000*0.3048) - alt[ind1] #[m]
+
+        #Heading from [deg] to [rad]
+        hdg = np.deg2rad(hdg)
+
+        #Compute horizontal tau (dist/dist_rate)
+        rdot = gs[ind1]*np.cos(qdr-hdg[ind1]) #[m/s]
+        tau_h = dist/rdot #[s]
+
+        #Compute vertical tau (alt/alt_range)
+        hdot = vs[ind1]*np.sign(dalt) #[m/s]
+        tau_v = (np.absolute(dalt))/hdot #[s]
+
+        # In LoS the VO can't be defined, act as if dist is on edge
+        dist[dist < hsepm] = hsepm
+
+        # Calculate vertices of Velocity Obstacle (CCW)
+        # These are still in relative velocity space, see derivation in appendix
+        # Half-angle of the Velocity obstacle [rad]
+        # Include safety margin
+        alpha = np.arcsin(hsepm / dist)
+        # Limit half-angle alpha to 89.982 deg. Ensures that VO can be constructed
+        alpha[alpha > alpham] = alpham
+        cosalpha = np.cos(alpha)
+        # Relevant sin/cos/tan
+        sinqdr = np.sin(qdr)
+        cosqdr = np.cos(qdr)
+        tanalpha = np.tan(alpha)
+        cosqdrtanalpha = cosqdr * tanalpha
+        sinqdrtanalpha = sinqdr * tanalpha
+
+        # Relevant x1,y1,x2,y2 (x0 and y0 are zero in relative velocity space)
+        x1 = (sinqdr + cosqdrtanalpha) * 2 * vmax
+        x2 = (sinqdr - cosqdrtanalpha) * 2 * vmax
+        y1 = (cosqdr - sinqdrtanalpha) * 2 * vmax
+        y2 = (cosqdr + sinqdrtanalpha) * 2 * vmax
+
+        # Loop over every grid cell
+        t = []
+        for i in range(self.cells):
+            if i%50==0:
+                print('Cell '+str(i))
+            # Calculate SSD only for aircraft in conflict (See formulas appendix)
+            # SSD for aircraft i
+            # Get indices that belong to cell i
+            ind = np.where(ind2 == i)[0]
+            # Check whether there are any aircraft in the vicinity
+            if len(ind) == 0:
+                # No aircraft in the vicinity
+                # Map them into the format ARV wants. Outercircle CCW, innercircle CW
+                ARV_loc[i] = circle_lst
+                FRV_loc[i] = []
+
+            else:
+                # The i's of the other aircraft
+                i_other = np.arange(ntraf)
+                cosalpha_i = cosalpha[ind]
+
+
+                #### Filter aircraft to be taken into account ####
+                #Aircraft with a positive tau smaller than a value or aircraft closer than 10nm
+                ac_adsb = np.where(np.logical_or(np.logical_and(tau_h[ind]<4000,tau_h[ind]>0),dist[ind] < 6*nm))[0]
+                #Aircraft with positive vertical tau smaller than 50 or with altitude difference smaller than 1500ft
+                ac_alt1 = np.where(np.logical_or(np.logical_and(tau_v[ind]<800,tau_v[ind]>0),dalt[ind] < 1500*ft))[0]
+                #concatenate both arrays and count which index happens more than once (both vertical and horizontally relevant)
+                ac_joint = np.concatenate([ac_adsb,ac_alt1])
+                ac_adsb =  [item for item, count in Counter(ac_joint).items() if count > 1] #Only for A/C in ads-b range AND VS converging
+
+                # Now account for ADS-B range in indices of other aircraft (i_other)
+                ind = ind[ac_adsb]
+                i_other = i_other[ac_adsb]
+                # VO from 2 to 1 is mirror of 1 to 2. Only 1 to 2 can be constructed in
+                # this manner, so need a correction vector that will mirror the VO
+                fix = np.ones(np.shape(i_other))
+                #fix[i_other < i] = -1
+
+                drel_x, drel_y = fix*dist[ind]*np.sin(qdr[ind]), fix*dist[ind]*np.cos(qdr[ind])
+                drel = np.dstack((drel_x,drel_y))
+
+                # Get vertices in an x- and y-array of size (ntraf-1)*3x1
+                x = np.concatenate((gseast[i_other],
+                                    x1[ind] * fix + gseast[i_other],
+                                    x2[ind] * fix + gseast[i_other]))
+                y = np.concatenate((gsnorth[i_other],
+                                    y1[ind] * fix + gsnorth[i_other],
+                                    y2[ind] * fix + gsnorth[i_other]))
+                # Reshape [(ntraf-1)x3] and put arrays in one array [(ntraf-1)x3x2]
+                x = np.transpose(x.reshape(3, np.shape(i_other)[0]))
+                y = np.transpose(y.reshape(3, np.shape(i_other)[0]))
+                xy = np.dstack((x,y))
+
+                # Make a clipper object
+                #pc = pyclipper.Pyclipper()
+                pcr = pyclipper.Pyclipper()
+                # Add circles (ring-shape) to clipper as subject
+                #pc.AddPaths(pyclipper.scale_to_clipper(circle_tup), pyclipper.PT_SUBJECT, True)
+                pcr.AddPaths(pyclipper.scale_to_clipper(circle_tup), pyclipper.PT_SUBJECT, True)
+
+
+                # Add each other aircraft to clipper as clip
+                for j in range(np.shape(i_other)[0]):
+                    # Scale VO when not in LOS
+                    #Find index for data between cell i and aircraft j
+                    a = np.where(np.logical_and(ind1==j,ind2==i))[0][0]
+                    dist_mod = dist[ind[j]]
+
+                    if dist[a] > hsepm:
+
+                        #direction of the VO's bisector
+                        nd = drel[0,j,:]/dist_mod
+                        R = np.array([[np.sqrt(1-(hsepm/dist_mod)**2), hsepm/dist_mod], [-hsepm/dist_mod, np.sqrt(1-(hsepm/dist_mod)**2)] ])
+                        n_t1 = np.matmul(nd, R) #Direction of leg2
+                        n_t2 = np.matmul(nd, np.transpose(R)) #Direction of leg1
+
+                        #VO points
+                        v_other = [gseast[i_other[j]],gsnorth[i_other[j]]]
+                        legs_length = 2*vmax/cosalpha_i[j]
+                        VO_points = np.array([v_other, np.add(n_t2*legs_length, v_other), np.add( n_t1* legs_length, v_other)])
+
+                        #take only the farthest 2 vertices of the VO and make a tupple
+                        vertexes = tuple(map(tuple,VO_points[1:,:]))
+                        try:
+                            VO_r1 = self.roundoff(tau, hsepm, dist_mod, VO_points[0,:], nd, n_t1, n_t2, vertexes, xyc)
+                            VO_r = pyclipper.scale_to_clipper(VO_r1)
+                        except:
+                            #If error using roudoff, use normal velocity obstacle
+                            VO_r = pyclipper.scale_to_clipper(tuple(map(tuple,xy[j,:,:])))
+                    else:
+                        # Pair is in LOS, instead of triangular VO, use darttip
+                        qdr_los = qdr[a] + np.pi
+
+                        # Length of inner-leg of darttip
+                        leg = 1.1 * vmax / np.cos(beta) * np.array([1,1,1,0])
+                        # Angles of darttip
+                        angles_los = np.array([qdr_los + 2 * beta, qdr_los, qdr_los - 2 * beta, 0.])
+                        # Calculate coordinates (CCW)
+                        x_los = leg * np.sin(angles_los)
+                        y_los = leg * np.cos(angles_los)
+                        # Put in array of correct format
+                        xy_los = np.vstack((x_los,y_los)).T
+                        # Scale darttip
+                        #VO = pyclipper.scale_to_clipper(tuple(map(tuple,xy_los)))
+                        VO_r = pyclipper.scale_to_clipper(tuple(map(tuple,xy_los)))
+
+                    # Add scaled VO to clipper
+                    #pc.AddPath(VO, pyclipper.PT_CLIP, True)
+                    pcr.AddPath(VO_r, pyclipper.PT_CLIP, True)
+
+                # Execute clipper command
+                #FRV = pyclipper.scale_from_clipper(pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO))
+                #ARV = pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+
+                #Execute clipper command for rounded VO
+                FRVr = pyclipper.scale_from_clipper(pcr.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO))
+                ARVr = pyclipper.scale_from_clipper(pcr.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO))
+
+
+                # Scale back
+                #ARV = pyclipper.scale_from_clipper(ARV)
+
+                # Check if ARV or FRV is empty
+                if len(ARVr) == 0:
+                    # No aircraft in the vicinity
+                    # Map them into the format ARV wants. Outercircle CCW, innercircle CW
+                    # ARV_loc[i] = []
+                    # FRV_loc[i] = circle_lst
+                    if len(ARVr) ==0: #indeed, there's only the possibility to have ARV_3/5 equal to zero if the original ARV is zero
+                        ARV_locr[i] = []
+                        FRV_locr[i] = circle_lst
+                elif len(FRVr) == 0:
+                    # Should not happen with one a/c or no other a/c in the vicinity.
+                    # These are handled earlier. Happens when RotA has removed all
+                    # Map them into the format ARV wants. Outercircle CCW, innercircle CW
+                    # ARV_loc[i] = circle_lst
+                    # FRV_loc[i] = []
+                    FRV_locr[i] = []
+                    ARV_locr[i] = circle_lst
+
+                else:
+
+                    #Then/Except:
+                    if FRVr:
+                        #Calcular tambem ARVs
+                        if not type(ARVr[0][0]) == list:
+                            ARVr = [ARVr]
+                        ARV_locr[i] = ARVr
+                        if not type(FRVr[0][0]) == list:
+                            FRVr = [FRVr]
+                        FRV_locr[i] = FRVr
+                    else:
+                        FRV_locr[i] = []
+                        ARV_locr[i] = circle_lst
+
+                    # # Check multi exteriors, if this layer is not a list, it means it has no exteriors
+                    # # In that case, make it a list, such that its format is consistent with further code
+                    # if not type(FRV[0][0]) == list:
+                    #     FRV = [FRV]
+                    # if not type(ARV[0][0]) == list:
+                    #     ARV = [ARV]
+                    # # Store in asas
+                    # FRV_loc[i] = FRV
+                    # ARV_loc[i] = ARV
+
+
+
+        # If sequential approach, the local should go elsewhere
+        FRV          = FRV_locr
+        ARV          = ARV_locr
+
+        return FRV,ARV
+
+
+
+    def constructSSD2(self,grid, traf, priocode = "RS1"):
+        """ Calculates the FRV and ARV of the SSD """
+        #Forbidden Reachable Velocity regions
+        FRV          = [None]
+
+        #Allowed Reachable Velocity regions
+        ARV          = [None]
+
+        latown,lonown = self.coord2latlon(grid[1],grid[0])
+
+        altown = grid[2]*5000*0.3048 #[m]
+
+        N = 0
+        # Parameters
+        N_angle = 180                   # [-] Number of points on circle (discretization)
+        vmin    = self.vmin             # 180kts - [m/s] Defined in asas.py
+        vmax    = self.vmax             # 350kts - [m/s] Defined in asas.py
+        hsep    = 5*1852                # [m] Horizontal separation (5 NM)
+        margin  = 1                     # [-] Safety margin for evasion
+        hsepm   = hsep * margin         # [m] Horizontal separation with safety margin
+        alpham  = 0.4999 * np.pi        # [rad] Maximum half-angle for VO
+        betalos = np.pi / 4             # [rad] Minimum divertion angle for LOS (45 deg seems optimal)
+        adsbmax = 40. * nm              # [m] Maximum ADS-B range
+        beta    =  np.pi/4 + betalos/2
+        if priocode == "RS7" or priocode == "RS8":
+            adsbmax /= 2
+
+        # Relevant info from traf
+        gsnorth = traf.gsnorth
+        vs      = traf.vs
+        gseast  = traf.gseast
+        lat     = traf.lat
+        lon     = traf.lon
+        ntraf   = traf.ntraf
+        hdg     = traf.hdg
+        gs      = traf.tas
+        alt     = traf.alt
+
+        # Local variables, will be put into asas later
+        FRV_loc          = [None]
+        ARV_loc          = [None]
+        # For calculation purposes
+        ARV_calc_loc     = [None]
+        FRV_area_loc     = np.zeros(traf.ntraf, dtype=np.float32)
+        ARV_area_loc     = np.zeros(traf.ntraf, dtype=np.float32)
+
+        # # Use velocity limits for the ring-shaped part of the SSD
+        # Discretize the circles using points on circle
+        angles = np.arange(0, 2 * np.pi, 2 * np.pi / N_angle)
+        # Put points of unit-circle in a (180x2)-array (CW)
+        xyc = np.transpose(np.reshape(np.concatenate((np.sin(angles), np.cos(angles))), (2, N_angle)))
+        # Map them into the format pyclipper wants. Outercircle CCW, innercircle CW
+        circle_tup = (tuple(map(tuple, np.flipud(xyc * vmax))), tuple(map(tuple , xyc * vmin)))
+        circle_lst = [list(map(list, np.flipud(xyc * vmax))), list(map(list , xyc * vmin))]
+
+        # Function qdrdist_matrix needs 4 vectors as input (lat1,lon1,lat2,lon2)
+        # To be efficient, calculate all qdr and dist in one function call
+        # Example with ntraf = 5:   ind1 = [0,0,0,0,1,1,1,2,2,3]
+        #                           ind2 = [1,2,3,4,2,3,4,3,4,4]
+        # This way the qdrdist is only calculated once between every aircraft
+        # To get all combinations, use this function to get the indices
+        ind1 = np.arange(ntraf) #ind1-traf, ind2-grid
+
+        # Get absolute bearing [deg] and distance [nm]
+        # Not sure abs/rel, but qdr is defined from [-180,180] deg, w.r.t. North
+        [qdr, dist] = geo.qdrdist_matrix(latown, lonown, lat[ind1], lon[ind1])
         # Put result of function from matrix to ndarray
         qdr  = np.reshape(np.array(qdr), np.shape(ind1))
         dist = np.reshape(np.array(dist), np.shape(ind1))
         #Compute altitude difference between all indexes
-        dalt = alt[ind1]-alt[ind2]
+        dalt = altown - alt[ind1] #[m]
         # SI-units from [deg] to [rad]
         qdr  = np.deg2rad(qdr)
         # Get distance from [nm] to [m]
@@ -474,12 +744,12 @@ class Simulation():
         hdg = np.deg2rad(hdg)
 
         #Compute horizontal tau (dist/dist_rate)
-        rdot = gs[ind1]*np.cos(qdr-hdg[ind1])-gs[ind2]*np.cos(qdr-hdg[ind2])
-        tau_h = dist/rdot
+        rdot = gs[ind1]*np.cos(qdr-hdg[ind1]) #[m/s]
+        tau_h = dist/rdot #[s]
 
         #Compute vertical tau (alt/alt_range)
-        hdot = vs[ind2]-vs[ind1]
-        tau_v = (alt[ind1]-alt[ind2])/hdot
+        hdot = vs[ind1]*np.sign(dalt) #[m/s]
+        tau_v = (np.absolute(dalt))/hdot #[s]
 
         # In LoS the VO can't be defined, act as if dist is on edge
         dist[dist < hsepm] = hsepm
@@ -503,170 +773,123 @@ class Simulation():
         x2 = (sinqdr - cosqdrtanalpha) * 2 * vmax
         y1 = (cosqdr - sinqdrtanalpha) * 2 * vmax
         y2 = (cosqdr + sinqdrtanalpha) * 2 * vmax
+        # Calculate SSD for all aircraft
+        # SSD for aircraft i
+        # Get indices that belong to aircraft i
+        ind = ind1
+        # Check whether there are any aircraft in the vicinity
+        if len(ind) == 0:
+            # No aircraft in the vicinity
+            # Map them into the format ARV wants. Outercircle CCW, innercircle CW
+            ARV_loc = circle_lst
+            FRV_loc = []
+            ARV_calc_loc = ARV_loc[i]
+        else:
+            # The i's of the other aircraft
+            i_other = ind1
+            #### Filter aircraft to be taken into account ####
+            #Aircraft with a positive tau smaller than a value or aircraft closer than 10nm
+            ac_adsb = np.where(np.logical_or(np.logical_and(tau_h[ind]<1E50,tau_h[ind]>0),dist[ind] < 6*nm))[0]
+            #Aircraft with positive vertical tau smaller than 50 or with altitude difference smaller than 1500ft
+            ac_alt1 = np.where(np.logical_or(np.logical_and(tau_v[ind]<1E50,tau_v[ind]>0),dalt[ind] < 1500*ft))[0]
+            #concatenate both arrays and count which index happens more than once (both vertical and horizontally relevant)
+            ac_joint = np.concatenate([ac_adsb,ac_alt1])
+            ac_adsb =  [item for item, count in Counter(ac_joint).items() if count > 1] #Only for A/C in ads-b range AND VS converging
 
-        # Consider every aircraft
-        for i in range(ntraf):
-            # Calculate SSD for all aircraft
-            # Get indices that belong to aircraft i
-            ind = np.where(np.logical_or(ind1 == i,ind2 == i))[0]
-            # Check whether there are any aircraft in the vicinity
-            if len(ind) == 0:
+            # Now account for ADS-B range in indices of other aircraft (i_other)
+            ind = ind[ac_adsb]
+            i_other = i_other[ac_adsb]
+            # VO from 2 to 1 is mirror of 1 to 2. Only 1 to 2 can be constructed in
+            # this manner, so need a correction vector that will mirror the VO
+            fix = np.ones(np.shape(i_other))
+            #fix[i_other < i] = -1
+            # Relative bearing [deg] from [-180,180]
+            # (less required conversions than rad in RotA)
+            fix_ang = np.zeros(np.shape(i_other))
+            #fix_ang[i_other < i] = 180.
+
+
+            # Get vertices in an x- and y-array of size (ntraf-1)*3x1
+            x = np.concatenate((gseast[i_other],
+                                x1[ind] * fix + gseast[i_other],
+                                x2[ind] * fix + gseast[i_other]))
+            y = np.concatenate((gsnorth[i_other],
+                                y1[ind] * fix + gsnorth[i_other],
+                                y2[ind] * fix + gsnorth[i_other]))
+            # Reshape [(ntraf-1)x3] and put arrays in one array [(ntraf-1)x3x2]
+            x = np.transpose(x.reshape(3, np.shape(i_other)[0]))
+            y = np.transpose(y.reshape(3, np.shape(i_other)[0]))
+            xy = np.dstack((x,y))
+
+            # Make a clipper object
+            pc = pyclipper.Pyclipper()
+
+            # Add circles (ring-shape) to clipper as subject
+            pc.AddPaths(pyclipper.scale_to_clipper(circle_tup), pyclipper.PT_SUBJECT, True)
+
+            # Add each other other aircraft to clipper as clip
+            for j in range(np.shape(i_other)[0]):
+                ## Debug prints
+                ## print(traf.id[i] + " - " + traf.id[i_other[j]])
+                ## print(dist[ind[j]])
+                # Scale VO when not in LOS
+                if dist[ind[j]] > hsepm:
+                    # Normally VO shall be added of this other a/c
+                    VO = pyclipper.scale_to_clipper(tuple(map(tuple,xy[j,:,:])))
+                else:
+                    # Pair is in LOS, instead of triangular VO, use darttip
+                    # Check if bearing should be mirrored
+                    qdr_los = qdr[ind[j]]
+                    # Length of inner-leg of darttip
+                    leg = 1.1 * vmax / np.cos(beta) * np.array([1,1,1,0])
+                    # Angles of darttip
+                    angles_los = np.array([qdr_los + 2 * beta, qdr_los, qdr_los - 2 * beta, 0.])
+                    # Calculate coordinates (CCW)
+                    x_los = leg * np.sin(angles_los)
+                    y_los = leg * np.cos(angles_los)
+                    # Put in array of correct format
+                    xy_los = np.vstack((x_los,y_los)).T
+                    # Scale darttip
+                    VO = pyclipper.scale_to_clipper(tuple(map(tuple,xy_los)))
+                # Add scaled VO to clipper
+                pc.AddPath(VO, pyclipper.PT_CLIP, True)
+
+
+            # Execute clipper command
+            FRV = pyclipper.scale_from_clipper(pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO))
+
+            ARV = pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
+
+            # Scale back
+            ARV = pyclipper.scale_from_clipper(ARV)
+
+            # Check if ARV or FRV is empty
+            if len(ARV) == 0:
                 # No aircraft in the vicinity
                 # Map them into the format ARV wants. Outercircle CCW, innercircle CW
-                ARV_loc[i] = circle_lst
-                FRV_loc[i] = []
+                ARV_loc = []
+                FRV_loc = circle_lst
+                ARV_calc_loc = []
+
+            elif len(FRV) == 0:
+                # Should not happen with one a/c or no other a/c in the vicinity.
+                # These are handled earlier. Happens when RotA has removed all
+                # Map them into the format ARV wants. Outercircle CCW, innercircle CW
+                ARV_loc = circle_lst
+                FRV_loc = []
+                ARV_calc_loc = circle_lst
             else:
-                # The i's of the other aircraft
-                i_other = np.delete(np.arange(0, ntraf), i)
-                #### Filter aircraft to be taken into account ####
-                #Aircraft with a positive tau smaller than a value or aircraft closer than 10nm
-                ac_adsb = np.where(np.logical_or(np.logical_and(tau_h[ind]<4000,tau_h[ind]>0),dist[ind] < 6*nm))[0]
-                #Aircraft with positive vertical tau smaller than 50 or with altitude difference smaller than 1500ft
-                ac_alt1 = np.where(np.logical_or(np.logical_and(tau_v[ind]<1000,tau_v[ind]>0),dalt[ind] < 1500*ft))[0]
-                #concatenate both arrays and count which index happens more than once (both vertical and horizontally relevant)
-                ac_joint = np.concatenate([ac_adsb,ac_alt1])
-                ac_adsb =  [item for item, count in Counter(ac_joint).items() if count > 1] #Only for A/C in ads-b range AND VS converging
+                # Check multi exteriors, if this layer is not a list, it means it has no exteriors
+                # In that case, make it a list, such that its format is consistent with further code
+                if not type(FRV[0]) == list:
+                    FRV = [FRV]
+                if not type(ARV[0]) == list:
+                    ARV = [ARV]
+                # Store in asas
+                FRV_loc = FRV
+                ARV_loc = ARV
 
-                # Now account for ADS-B range in indices of other aircraft (i_other)
-                ind = ind[ac_adsb]
-                i_other = i_other[ac_adsb]
-                # VO from 2 to 1 is mirror of 1 to 2. Only 1 to 2 can be constructed in
-                # this manner, so need a correction vector that will mirror the VO
-                fix = np.ones(np.shape(i_other))
-                fix[i_other < i] = -1
-                # Relative bearing [deg] from [-180,180]
-                # (less required conversions than rad in RotA)
-                fix_ang = np.zeros(np.shape(i_other))
-                fix_ang[i_other < i] = 180.
-
-                drel_x, drel_y = fix*dist[ind]*np.sin(qdr[ind]), fix*dist[ind]*np.cos(qdr[ind])
-                drel = np.dstack((drel_x,drel_y))
-
-
-                # Get vertices in an x- and y-array of size (ntraf-1)*3x1
-                x = np.concatenate((gseast[i_other],
-                                    x1[ind] * fix + gseast[i_other],
-                                    x2[ind] * fix + gseast[i_other]))
-                y = np.concatenate((gsnorth[i_other],
-                                    y1[ind] * fix + gsnorth[i_other],
-                                    y2[ind] * fix + gsnorth[i_other]))
-                # Reshape [(ntraf-1)x3] and put arrays in one array [(ntraf-1)x3x2]
-                x = np.transpose(x.reshape(3, np.shape(i_other)[0]))
-                y = np.transpose(y.reshape(3, np.shape(i_other)[0]))
-                xy = np.dstack((x,y))
-
-                # Make a clipper object
-                pc = pyclipper.Pyclipper()
-
-                trncons = 90 #Turning angle constraint
-                trn_cons = np.radians(trncons)
-                angles2 = np.arange(np.radians(traf.hdg[i])-trn_cons, np.radians(traf.hdg[i])+trn_cons, 2*trn_cons/N_angle)
-                # Put points of unit-circle in a (180x2)-array (CW)
-                xyc2 = np.transpose(np.reshape(np.concatenate((np.sin(angles2), np.cos(angles2))), (2, len(angles2))))
-                #For tupple
-                inner_semicircle = (tuple(map(tuple , xyc2 * vmin)))
-                outer_semicircle = tuple(map(tuple, np.flipud(xyc2 * vmax)))
-                new_circle_tup = inner_semicircle + outer_semicircle
-                #For list
-                inner_semicircle = [list(map(list , xyc2 * vmin))]
-                outer_semicircle = [list(map(list, np.flipud(xyc2 * vmax)))]
-                new_circle_lst = inner_semicircle + outer_semicircle
-
-                # Add circles (ring-shape) to clipper as subject
-                pc.AddPath(pyclipper.scale_to_clipper(new_circle_tup), pyclipper.PT_SUBJECT, True)
-
-                # Add each other other aircraft to clipper as clip
-                for j in range(np.shape(i_other)[0]):
-                    ## Debug prints
-                    ## print(traf.id[i] + " - " + traf.id[i_other[j]])
-                    ## print(dist[ind[j]])
-                    # Scale VO when not in LOS
-                    if dist[ind[j]] > hsepm:
-                        # Normally VO shall be added of this other a/c
-                        #VO = pyclipper.scale_to_clipper(tuple(map(tuple,xy[j,:,:])))
-                        #direction of the VO's bisector
-                        nd = drel[0,j,:]/dist_mod
-                        R = np.array([[np.sqrt(1-(hsepm/dist_mod)**2), hsepm/dist_mod], [-hsepm/dist_mod, np.sqrt(1-(hsepm/dist_mod)**2)] ])
-                        n_t1 = np.matmul(nd, R) #Direction of leg2
-                        n_t2 = np.matmul(nd, np.transpose(R)) #Direction of leg1
-
-                        #VO points
-                        v_other = [gseast[i_other[j]],gsnorth[i_other[j]]]
-                        legs_length = 2*vmax/cosalpha_i[j]
-                        VO_points = np.array([v_other, np.add(n_t2*legs_length, v_other), np.add( n_t1* legs_length, v_other)])
-
-                        #take only the farthest 2 vertices of the VO and make a tupple
-                        vertexes = tuple(map(tuple,VO_points[1:,:]))
-                        try:
-                            print('Used roundoff')
-                            VO_r1 = self.roundoff(tau, hsepm, dist[ind[j]], VO_points[0,:], nd, n_t1, n_t2, vertexes, xyc)
-                            VO = pyclipper.scale_to_clipper(VO_r1)
-                        except:
-                            print('Not used roundoff')
-                            #If error using roudoff, use normal velocity obstacle
-                            VO = pyclipper.scale_to_clipper(tuple(map(tuple,xy[j,:,:])))
-                    else:
-                        # Pair is in LOS, instead of triangular VO, use darttip
-                        # Check if bearing should be mirrored
-                        if i_other[j] < i:
-                            qdr_los = qdr[ind[j]] + np.pi
-                        else:
-                            qdr_los = qdr[ind[j]]
-                        # Length of inner-leg of darttip
-                        leg = 1.1 * vmax / np.cos(beta) * np.array([1,1,1,0])
-                        # Angles of darttip
-                        angles_los = np.array([qdr_los + 2 * beta, qdr_los, qdr_los - 2 * beta, 0.])
-                        # Calculate coordinates (CCW)
-                        x_los = leg * np.sin(angles_los)
-                        y_los = leg * np.cos(angles_los)
-                        # Put in array of correct format
-                        xy_los = np.vstack((x_los,y_los)).T
-                        # Scale darttip
-                        VO = pyclipper.scale_to_clipper(tuple(map(tuple,xy_los)))
-                    # Add scaled VO to clipper
-                    pc.AddPath(VO, pyclipper.PT_CLIP, True)
-
-
-                # Execute clipper command
-                FRV = pyclipper.scale_from_clipper(pc.Execute(pyclipper.CT_INTERSECTION, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO))
-
-                ARV = pc.Execute(pyclipper.CT_DIFFERENCE, pyclipper.PFT_NONZERO, pyclipper.PFT_NONZERO)
-
-                # Scale back
-                ARV = pyclipper.scale_from_clipper(ARV)
-
-                # Check if ARV or FRV is empty
-                if len(ARV) == 0:
-                    # No aircraft in the vicinity
-                    # Map them into the format ARV wants. Outercircle CCW, innercircle CW
-                    ARV_loc[i] = []
-                    FRV_loc[i] = circle_lst
-
-                elif len(FRV) == 0:
-                    # Should not happen with one a/c or no other a/c in the vicinity.
-                    # These are handled earlier. Happens when RotA has removed all
-                    # Map them into the format ARV wants. Outercircle CCW, innercircle CW
-                    ARV_loc[i] = circle_lst
-                    FRV_loc[i] = []
-
-                else:
-                    # Check multi exteriors, if this layer is not a list, it means it has no exteriors
-                    # In that case, make it a list, such that its format is consistent with further code
-                    if not type(FRV[0][0]) == list:
-                        FRV = [FRV]
-                    if not type(ARV[0][0]) == list:
-                        ARV = [ARV]
-                    # Store in asas
-                    FRV_loc[i] = FRV
-                    ARV_loc[i] = ARV
-
-        # If sequential approach, the local should go elsewhere
-        if not priocode == "RS7" and not priocode == "RS8":
-            asas.FRV          = FRV_loc
-            asas.ARV          = ARV_loc
-        return
-
-
+        return FRV_loc,ARV_loc
 
 
     def constructSSD1(self,asas, traf):
@@ -952,7 +1175,7 @@ class Simulation():
 
         return
 
-    def qdrdist_matrix_indices(self,ntraf):
+    def qdrdist_matrix_indices(self,ntraf,grid):
         """ This function gives the indices that can be used in the lon/lat-vectors """
         # The indices will be n*(n-1)/2 long
         # Only works for n >= 2, which is logical...
