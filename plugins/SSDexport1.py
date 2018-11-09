@@ -158,12 +158,12 @@ class Simulation():
     def flexMatrix(self,coords,t):
         #Generates the matrix in which the flexibility information is stored
         #Discretise coordinates so that flex[lat,lon,alt,iteration] = feas/(feas+unfeas)
-        self.d = 1/5 #Discretise coordinates for every 1/20 of degree -> 3 nm
+        self.d = 1/10 #Discretise coordinates for every 1/20 of degree -> 3 nm
         self.nlat = np.int((np.amax(coords[:,0]) - np.amin(coords[:,0]))/self.d)+1
         self.nlon = np.int((np.amax(coords[:,1]) - np.amin(coords[:,1]))/self.d)+1
         self.max_lat = np.amax(coords[:,0])
         self.min_lon = np.amin(coords[:,1])
-        self.nalt = int(50000/10000) # Altitude in 5000ft intervals (flight levels)
+        self.nalt = int(50000/10000) # Altitude in 10000ft intervals (flight levels)
         sim_length = t/45+3
         flex = np.ones((self.nlon,self.nlat,self.nalt+1,int(sim_length)),dtype=np.float32)
         flex[:] = np.NaN #Only actual data will be number, otherwise NaN
@@ -203,7 +203,9 @@ class Simulation():
         if self.active:
             self.ACcount = np.zeros(int(self.t_sim*60*60/30)+5)
             self.flexibility_global = self.flexMatrix(np.reshape(self.coord,(int(len(self.coord)/2),2)),self.t_sim*60*60)
+            print(np.shape(self.flexibility_global))
             self.grid = self.createGrid()
+            np.save('selgrid.npy',self.grid)
         stack.stack('AREA NL')
 
         return True
@@ -213,28 +215,27 @@ class Simulation():
         polygon = [[self.coord[1::2][i],self.coord[0::2][i]] for i in range(len(self.coord[0::2]))]
         p = path.Path(polygon)
         #Generate list of latitude and longitude indices
-        lats = np.arange(self.nlat)
-        lons = np.arange(self.nlon)
+        lats = np.arange(len(self.flexibility_global[0,:,0,0]))
+        lons = np.arange(len(self.flexibility_global[:,0,0,0]))
         #Genrate list of altitudes
-        alts = np.arange(self.nalt)
+        alts = np.arange(len(self.flexibility_global[0,0,:,0]))
         #Create the grid with all cells
         gridx,gridy,gridz = np.meshgrid(lons,lats,alts)
-        grid0 = np.vstack([gridx.ravel(),gridy.ravel(),gridz.ravel()])
+        grid0 = np.vstack([gridx.ravel(),gridy.ravel(),gridz.ravel()]) #0>lon,1>lat
         #Convert to actual coordinates
-        latsn, lonsn = self.coord2latlon(grid0[1],grid0[0])
+        latsn, lonsn = self.coord2latlon(grid0[1],grid0[0]) #lat and lon
         points = np.array([[lonsn[i]+self.d/2,latsn[i]-self.d/2] for i in range(len(latsn))])
-        print(points)
         #Select points within polygon
         inside = p.contains_points(points) #Bool mask for points inside
-        #print(np.shape(grid0[0]))
-        #print(np.shape(inside))
         #Select grid points that are inside the polygon
         gridx = grid0[0][inside]
         gridy = grid0[1][inside]
         gridz = grid0[2][inside]
         grid = np.vstack([gridx.ravel(),gridy.ravel(),gridz.ravel()])
 
+
         np.save('grid_pts.npy',np.array([latsn[inside],lonsn[inside]]))
+        np.save('grid.npy',grid)
         self.cells = len(gridx)
         print(np.shape(grid))
         return grid
@@ -271,7 +272,8 @@ class Simulation():
         #Obtain list of aircraft inside the defined area
         #Obtain the indices of lat and lon of aircraft for flexibiity matrix
         self.ACcount[self.time_stamp-1] = np.sum(inNL)
-        FRV_all,ARV_all = self.constructSSD(traf)
+        latcell, loncell = self.coord2latlon(self.grid[1],self.grid[0])
+        FRV_all,ARV_all = self.constructSSD(traf, latcell, loncell)
         #Generate the maximum and minimum speed circles Polygon
         N_angle = 180
         vmax = self.vmax
@@ -288,8 +290,11 @@ class Simulation():
         circ_in_pol = Polygon(circle_lst_in)
         circ_diff = circ_out_pol.difference(circ_in_pol)
         tot_area = circ_out_pol.area - circ_in_pol.area
+        EHAMiy,EHAMix = self.discreteCoord(52.3,4.8) #Index of EHAM coordinates on grid
+        print(EHAMiy,EHAMix)
 
-        for i in range(self.cells): #Evaluate the VO of each grid point
+        flex = np.ones(len(FRV_all))
+        for i in range(len(FRV_all)): #Evaluate the VO of each grid point
             if i%50==0:
                 print('Cell2 '+str(i))
             FRV = FRV_all[i]
@@ -308,45 +313,53 @@ class Simulation():
                 un_FRV = un_FRV.intersection(circ_diff) #Intersect ARV with complete solution space
                 free_area = un_FRV.area
 
-                flex = free_area/tot_area
-                if flex>1:
+                flex[i] = free_area/tot_area
+                if flex[i]>1:
                     #Wrong return of ARV, no aircraft in conflict -> flex=1
-                    self.flexibility_global[self.grid[0][i],self.grid[1][i],int(round(self.grid[2][i]/(5000*0.3048))),self.time_stamp-1] = 1
+                    self.flexibility_global[self.grid[0][i],self.grid[1][i],self.grid[2][i],self.time_stamp-1] = 1
                 else:
-                    self.flexibility_global[self.grid[0][i],self.grid[1][i],int(round(self.grid[2][i]/(5000*0.3048))),self.time_stamp-1] = flex
+                    self.flexibility_global[self.grid[0][i],self.grid[1][i],self.grid[2][i],self.time_stamp-1] = flex[i]
 
             else: #No velocity obstacles -> Full flexibility
-                flex = 1
-                self.flexibility_global[self.grid[0][i],self.grid[1][i],int(round(self.grid[2][i]/(5000*0.3048))),self.time_stamp-1] = 1
+                flex[i] = 1
+                self.flexibility_global[self.grid[0][i],self.grid[1][i],self.grid[2][i],self.time_stamp-1] = 1
 
-            if self.print:
-                #Only print if flexibility is lower than 0.25
-                fig, ax = plt.subplots()
-                if type(un_FRV)==Polygon:
-                    x,y = un_FRV.exterior.xy
-                    plt.plot(x,y, color ='red')
-                    ax.fill(x, y, color = '#C0C0C0') #gray
-                    x,y = circ_out_pol.exterior.xy
-                    plt.plot(x,y,color = 'black')
-                    x,y = circ_in_pol.exterior.xy
-                    plt.plot(x,y,color = 'black')
-                    ax.fill(x, y, color = 'white') #gray
-                    plt.title(str(self.grid[0][i])+', '+str(self.grid[1][i])+', '+str(self.grid[2][i]))
-                    plt.show()
-                else: #Multipolygon
-                    for k in range(len(list(un_FRV))):
-                        x,y = un_FRV[k].exterior.xy
-                        plt.plot(x,y, color = 'red')
+            if self.grid[0][i]==EHAMix and self.grid[1][i]==EHAMiy:
+                #print(self.grid[0][i],self.grid[1][i])
+                #print(EHAMix,EHAMiy)
+                if self.print:
+                    fig, ax = plt.subplots()
+                    if type(un_FRV)==Polygon:
+                        x,y = un_FRV.exterior.xy
+                        plt.plot(x,y, color ='red')
                         ax.fill(x, y, color = '#C0C0C0') #gray
                         x,y = circ_out_pol.exterior.xy
-                        plt.plot(x,y,color = 'green')
+                        plt.plot(x,y,color = 'black')
                         x,y = circ_in_pol.exterior.xy
                         plt.plot(x,y,color = 'black')
                         ax.fill(x, y, color = 'white') #gray
-                    plt.title(str(self.grid[0][i])+', '+str(self.grid[1][i])+', '+str(self.grid[2][i]))
-                    plt.show()
+                        plt.title(str(self.grid[0][i])+', '+str(self.grid[1][i])+', '+str(self.grid[2][i]))
+                        plt.show()
+                    else: #Multipolygon
+                        for k in range(len(list(un_FRV))):
+                            x,y = un_FRV[k].exterior.xy
+                            plt.plot(x,y, color = 'red')
+                            ax.fill(x, y, color = '#C0C0C0') #gray
+                            x,y = circ_out_pol.exterior.xy
+                            plt.plot(x,y,color = 'green')
+                            x,y = circ_in_pol.exterior.xy
+                            plt.plot(x,y,color = 'black')
+                            ax.fill(x, y, color = 'white') #gray
+                        plt.title(str(self.grid[0][i])+', '+str(self.grid[1][i])+', '+str(self.grid[2][i]))
+                        plt.show()
 
-            #print('Flex of '+str(self.grid[0][i])+','+str(self.grid[1][i])+','+str(self.grid[2][i])+' = '+str(self.flexibility_global[self.grid[0][i],self.grid[1][i],int(round(self.grid[2][i]/(5000*0.3048))),self.time_stamp-1]))
+        # flexplot = np.nanmean(self.flexibility_global[:,:,:,self.time_stamp-1],axis=2)
+        # a = plt.scatter(flexplot)
+        # plt.show()
+        # #plt.clim(0,1)
+        # plt.colorbar(a,label='Flexibility');
+
+        #print('Flex of '+str(self.grid[0][i])+','+str(self.grid[1][i])+','+str(self.grid[2][i])+' = '+str(self.flexibility_global[self.grid[0][i],self.grid[1][i],int(round(self.grid[2][i]/(5000*0.3048))),self.time_stamp-1]))
         return
 
     def discreteCoord(self,lat,lon):
@@ -360,7 +373,7 @@ class Simulation():
         return np.array(lat),np.array(lon)
 
 
-    def constructSSD(self, traf):
+    def constructSSD(self, traf, latcell, loncell):
         """ Calculates the FRV and ARV of the SSD """
 
         #Forbidden Reachable Velocity regions
@@ -369,7 +382,7 @@ class Simulation():
         #Allowed Reachable Velocity regions
         ARV          = [None]*self.cells
 
-        latcell, loncell = self.coord2latlon(self.grid[0],self.grid[1])
+
         altcell = self.grid[2]*5000*0.3048 #[m]
 
         N = 0
@@ -444,6 +457,17 @@ class Simulation():
         [qdr, dist] = geo.qdrdist_matrix(latcell[ind2]-0.5, loncell[ind2]+0.5, lat[ind1], lon[ind1])
         #print(str(np.amin(dist))+' between '+str(latcell[ind2[np.where(np.amin(dist))]])+','+str(loncell[ind2[np.where(np.amin(dist))]])+' and '+str(lon[ind1[np.where(np.amin(dist))]])+','+str(lat[ind1[np.where(np.amin(dist))]]))
         #print(len(np.where(dist<75)))
+
+
+        # ##########Debugging code###########
+        # #Save data of distance of aircraft to each grid point
+        # qdr2,dist2 = geo.qdrdist_matrix(lat[0],lon[0],latcell,loncell)
+        # np.save('grid_comp.npy', np.array([latcell,loncell]))
+        # np.save('grid_ind.npy',np.array([self.grid[0],self.grid[1]]))
+        # np.save('distance.npy',dist2)
+        # np.save('track.npy',qdr2)
+        # print(lat[0],lon[0])
+
         # Put result of function from matrix to ndarray
         qdr  = np.reshape(np.array(qdr), np.shape(ind1))
         dist = np.reshape(np.array(dist), np.shape(ind1))
@@ -554,11 +578,10 @@ class Simulation():
                 # Add each other aircraft to clipper as clip
                 for j in range(np.shape(i_other)[0]):
                     # Scale VO when not in LOS
-                    #Find index for data between cell i and aircraft j
-                    a = np.where(np.logical_and(ind1==j,ind2==i))[0][0]
+
                     dist_mod = dist[ind[j]]
 
-                    if dist[a] > hsepm:
+                    if dist_mod > hsepm:
 
                         #direction of the VO's bisector
                         nd = drel[0,j,:]/dist_mod
@@ -581,7 +604,7 @@ class Simulation():
                             VO_r = pyclipper.scale_to_clipper(tuple(map(tuple,xy[j,:,:])))
                     else:
                         # Pair is in LOS, instead of triangular VO, use darttip
-                        qdr_los = qdr[a] + np.pi
+                        qdr_los = qdr[ind[j]] + np.pi
 
                         # Length of inner-leg of darttip
                         leg = 1.1 * vmax / np.cos(beta) * np.array([1,1,1,0])
